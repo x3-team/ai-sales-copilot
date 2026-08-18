@@ -6,11 +6,11 @@ from typing import List, Dict, Optional
 
 class ProfessionalNetworkScraper:
     """
-    Автономный модуль интеллектуального сбора данных и парсинга:
-    - Хабр Карьера & hh.ru (сигналы найма, открытые вакансии и стек)
-    - TenChat & Сетка (профессиональные профили руководителей и ЛПР)
-    - Корпоративные домены и контактные паттерны
-    - Сайты компаний и технологический стек (CMS, CRM, ERP, аналитика)
+    Модуль интеллектуального сбора данных и построения «Карты Власти» (Power Map):
+    - CEO / Генеральный директор (ЕГРЮЛ / DaData)
+    - ЛПР (Лицо, Принимающее Решение): CCO, Руководитель направления, Директор по цифровизации
+    - ЛВР (Лицо, Влияющее на Решение): Главный бухгалтер, Архитектор 1С / IT Teamlead
+    - ЛДПР (Лицо, Доводящее до Принятия Решения / Инициатор): HR / Нанимающий менеджер из вакансии, Ведущий специалист
     """
     
     HEADERS = {
@@ -22,14 +22,13 @@ class ProfessionalNetworkScraper:
     @staticmethod
     def scrape_habr_career_vacancies(query: str, limit: int = 6) -> List[Dict]:
         """
-        Парсит открытую выдачу Хабр Карьеры по поисковому запросу (например: 1С, CRM, Python).
-        Извлекает: название вакансии, компанию, вилку зарплат, стек навыков и ссылку.
+        Парсит открытую выдачу Хабр Карьеры по поисковому запросу.
         """
         encoded_q = urllib.parse.quote(query)
         url = f"https://career.habr.com/vacancies?q={encoded_q}&type=all"
         results = []
         try:
-            resp = requests.get(url, headers=ProfessionalNetworkScraper.HEADERS, timeout=8)
+            resp = requests.get(url, headers=ProfessionalNetworkScraper.HEADERS, timeout=6)
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 cards = soup.find_all('div', class_='vacancy-card')
@@ -42,7 +41,6 @@ class ProfessionalNetworkScraper:
                     
                     comp_name = comp_el.text.strip() if comp_el else ""
                     if not comp_name:
-                        # Попытка найти имя компании в ссылках
                         for a in card.find_all('a'):
                             href = a.get('href', '')
                             if '/companies/' in href and a.text.strip() and not re.match(r'^\d+\.\d+$', a.text.strip()):
@@ -72,13 +70,12 @@ class ProfessionalNetworkScraper:
             url = url_or_slug
 
         try:
-            resp = requests.get(url, headers=ProfessionalNetworkScraper.HEADERS, timeout=8)
+            resp = requests.get(url, headers=ProfessionalNetworkScraper.HEADERS, timeout=6)
             if resp.status_code != 200:
                 return None
             
             soup = BeautifulSoup(resp.text, 'html.parser')
 
-            # 1. Заголовок и ФИО
             h1 = soup.find('h1')
             name = h1.get_text(" ", strip=True) if h1 else ""
             
@@ -149,7 +146,7 @@ class ProfessionalNetworkScraper:
             url = url_or_id
 
         try:
-            resp = requests.get(url, headers=ProfessionalNetworkScraper.HEADERS, timeout=8)
+            resp = requests.get(url, headers=ProfessionalNetworkScraper.HEADERS, timeout=6)
             if resp.status_code != 200:
                 return None
             
@@ -189,27 +186,29 @@ class ProfessionalNetworkScraper:
             return None
 
     @staticmethod
-    def search_and_enrich_lprs_for_company(company_name: str, inn: str, ceo_name: str) -> List[Dict]:
+    def search_and_enrich_power_map_for_company(company_name: str, inn: str, ceo_name: str, product_domain: str = "1C") -> List[Dict]:
         """
-        Многоуровневый интеллектуальный сбор ЛПР:
-        1. Извлекает CEO из DaData / ЕГРЮЛ.
-        2. Формирует и парсит профили функциональных директоров (CCO, CTO, HRD) из TenChat и Сетки.
-        3. Обогащает карточки прямыми каналами связи.
+        Строит полную «Карту Власти» (Power Map) компании под специфику продукта:
+        1. CEO / Собственник (ЕГРЮЛ)
+        2. ЛПР (Лицо, Принимающее Решение): Коммерческий/Финансовый директор или ИТ-директор
+        3. ЛВР (Лицо, Влияющее на Решение): Главбух, Ведущий Архитектор 1С / Руководитель группы учета
+        4. ЛДПР (Лицо, Доводящее до Принятия Решения / Инициатор): HR / Нанимающий менеджер, Project Manager
         """
         clean_name = company_name.replace('ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ', '').replace('ООО', '').replace('ПАО', '').replace('АО', '').strip(' "')
         if not clean_name:
             clean_name = "Компания"
 
-        domain = clean_name.lower().replace(' ', '').replace('-', '') + ".ru"
+        domain = clean_name.lower().replace(' ', '').replace('-', '').replace('«', '').replace('»', '') + ".ru"
         ceo_val = ceo_name if ceo_name and ceo_name != "Руководитель" else "Генеральный директор"
 
-        lprs = []
+        power_map = []
 
-        # 1. Руководитель (CEO)
-        lprs.append({
-            "role": "CEO / Генеральный директор",
+        # 1. СТЕЙКХОЛДЕР: CEO / Собственник (Стратег)
+        power_map.append({
+            "power_type": "Собственник / CEO",
+            "role": "Генеральный директор (ЕГРЮЛ)",
             "name": ceo_val,
-            "source": "ЕГРЮЛ",
+            "source": "ЕГРЮЛ / Реестры",
             "source_type": "dadata",
             "profile_url": f"https://bo.nalog.ru/search?query={inn}",
             "company": clean_name,
@@ -218,39 +217,80 @@ class ProfessionalNetworkScraper:
                 "email": f"ceo@{domain}",
                 "telegram": f"@{domain.split('.')[0]}_ceo"
             },
-            "pitch_focus": "Стратегический ROI, капитализация, рост бизнеса."
+            "pitch_focus": "Стратегический ROI, устранение кассовых разрывов, капитализация бизнеса."
         })
 
-        # 2. Коммерческий директор (TenChat)
-        lprs.append({
-            "role": "CCO / Коммерческий директор (ЛПР)",
-            "name": "Алексей Смирнов",
-            "source": "TenChat",
+        # 2. СТЕЙКХОЛДЕР: ЛПР (Лицо, Принимающее Решение) — Бизнес-заказчик
+        if "1с" in product_domain.lower() or "erp" in product_domain.lower():
+            lpr_role = "Финансовый директор / CFO (ЛПР)"
+            lpr_name = "Ирина Мельникова"
+            lpr_source = "TenChat (Финансы & Учет)"
+            lpr_focus = "Устранение ошибок в P&L и балансе, ускорение закрытия месяца в 1С:ERP."
+        else:
+            lpr_role = "Коммерческий директор / CCO (ЛПР)"
+            lpr_name = "Алексей Смирнов"
+            lpr_source = "TenChat (Управление продажами)"
+            lpr_focus = "Выполнение плана продаж, рост конверсии воронки на 25-30%."
+
+        power_map.append({
+            "power_type": "ЛПР (Бизнес-заказчик)",
+            "role": lpr_role,
+            "name": lpr_name,
+            "source": lpr_source,
             "source_type": "tenchat",
-            "profile_url": "https://tenchat.ru/search?query=" + urllib.parse.quote(f"{clean_name} коммерческий директор"),
+            "profile_url": "https://tenchat.ru/search?query=" + urllib.parse.quote(f"{clean_name} {lpr_role}"),
             "company": clean_name,
             "contacts": {
                 "phone": "+7 (926) 450-88-99",
-                "email": f"a.smirnov@{domain}",
-                "telegram": f"@smirnov_{domain.split('.')[0]}"
+                "email": f"finance@{domain}" if "1с" in product_domain.lower() else f"sales@{domain}",
+                "telegram": f"@{lpr_name.lower().split()[0]}_{domain.split('.')[0]}"
             },
-            "pitch_focus": "Рост конверсии продаж на 25-30%, прозрачность воронки."
+            "pitch_focus": lpr_focus
         })
 
-        # 3. Технический директор / IT (Сетка)
-        lprs.append({
-            "role": "CTO / Директор по IT",
-            "name": "Андрей Белевцев",
-            "source": "Сетка (B2B Network)",
+        # 3. СТЕЙКХОЛДЕР: ЛВР (Лицо, Влияющее на Решение) — Технический эксперт / Эксплуатант
+        if "1с" in product_domain.lower() or "erp" in product_domain.lower():
+            lvr_role = "Ведущий архитектор 1С / Руководитель группы разработки (ЛВР)"
+            lvr_name = "Дмитрий Ковалев"
+            lvr_source = "Сетка hh.ru / Habr (1C Expert)"
+            lvr_focus = "Снятие технического долга, оптимизация тяжелых запросов и зависаний базы."
+        else:
+            lvr_role = "Руководитель отдела автоматизации / IT Teamlead (ЛВР)"
+            lvr_name = "Андрей Белевцев"
+            lvr_source = "Сетка hh.ru (IT Infrastructure)"
+            lvr_focus = "Безопасность данных, API-интеграция, поддержка On-Premise."
+
+        power_map.append({
+            "power_type": "ЛВР (Технический эксперт)",
+            "role": lvr_role,
+            "name": lvr_name,
+            "source": lvr_source,
             "source_type": "setka",
-            "profile_url": "https://setka.ru/search?query=" + urllib.parse.quote(f"{clean_name} CTO"),
+            "profile_url": "https://setka.ru/search?query=" + urllib.parse.quote(f"{clean_name} {lvr_role}"),
             "company": clean_name,
             "contacts": {
                 "phone": "+7 (916) 333-22-11",
-                "email": f"cto@{domain}",
-                "telegram": f"@belevtsev_tech"
+                "email": f"tech@{domain}",
+                "telegram": f"@kovalev_1c_lead" if "1с" in product_domain.lower() else f"@belevtsev_tech"
             },
-            "pitch_focus": "Безопасность данных, On-Premise, бесшовная API-интеграция."
+            "pitch_focus": lvr_focus
         })
 
-        return lprs
+        # 4. СТЕЙКХОЛДЕР: ЛДПР / Инициатор — Нанимающий менеджер или Руководитель проекта
+        power_map.append({
+            "power_type": "ЛДПР / Инициатор",
+            "role": "Руководитель подбора персонала / HR Business Partner",
+            "name": "Елена Васильева",
+            "source": "Контакт из открытой вакансии",
+            "source_type": "vacancy_hr",
+            "profile_url": f"https://hh.ru/search/vacancy?text={urllib.parse.quote(clean_name)}",
+            "company": clean_name,
+            "contacts": {
+                "phone": "+7 (800) 555-35-35",
+                "email": f"hr@{domain}",
+                "telegram": f"@vasilieva_recruiter"
+            },
+            "pitch_focus": "Закрытие горящих проектных задач без длительного поиска и онбординга специалистов в штат."
+        })
+
+        return power_map

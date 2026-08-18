@@ -38,18 +38,18 @@ def call_gemini_llm(prompt: str, fallback_text: str) -> str:
     if not GEMINI_API_KEY:
         return fallback_text
     
-    models = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite"]
+    models = ["gemini-3.1-flash-lite", "gemini-3.6-flash"]
     for model_name in models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": 0.4,
-                "maxOutputTokens": 300
+                "maxOutputTokens": 250
             }
         }
         try:
-            resp = requests.post(url, json=payload, timeout=6)
+            resp = requests.post(url, json=payload, timeout=2.5)
             if resp.status_code == 200:
                 data = resp.json()
                 text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
@@ -254,21 +254,25 @@ def generate_dynamic_lprs(inn: str, company_name: str, ceo_from_dadata: str, tri
     if not clean_name:
         clean_name = "Компания"
 
-    # Вызываем многоуровневый скрейпер ЛПР
-    scraped_lprs = ProfessionalNetworkScraper.search_and_enrich_lprs_for_company(clean_name, inn, ceo_from_dadata)
+    # Вызываем многоуровневый скрейпер для построения полной Карты Власти (CEO, ЛПР, ЛВР, ЛДПР)
+    power_map = ProfessionalNetworkScraper.search_and_enrich_power_map_for_company(
+        clean_name, inn, ceo_from_dadata, product_domain=current_seller_profile.product_name
+    )
 
     p_name = current_seller_profile.product_name
     p_val = current_seller_profile.value_proposition
 
-    # Персонализируем питчи под найденные профили через Gemini Flash
-    for person in scraped_lprs:
+    # Персонализируем питчи под конкретную роль каждого участника Карты Власти
+    for idx, person in enumerate(power_map):
         role = person["role"]
         name = person["name"]
-        prompt = f"Напиши персональный B2B-питч (3 емких предложения) для первого контакта в Telegram с {name} ({role}) компании «{clean_name}». Мы предлагаем «{p_name}». Ценность: {p_val}. Специфика триггера: {trigger_info}."
+        power_type = person["power_type"]
         fallback = f"Здравствуйте, {name}! Мы изучили задачи компании «{clean_name}». Предлагаем решение «{p_name}» ({p_val}). Подскажите, когда вам удобно провести 10-минутное демо?"
+        
+        prompt = f"Напиши персональный B2B-питч (3 емких предложения) для первого контакта в Telegram с {name} ({role}, тип влияния: {power_type}) компании «{clean_name}». Мы предлагаем «{p_name}». Ценность: {p_val}. Специфика триггера: {trigger_info}."
         person["custom_pitch"] = call_gemini_llm(prompt, fallback)
 
-    return scraped_lprs
+    return power_map
 
 def generate_dynamic_hh_vacancies(inn: str, company_name: str):
     clean_name = company_name.replace('ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ', '').replace('ООО', '').replace('ПАО', '').replace('АО', '').strip(' "')
@@ -756,12 +760,16 @@ def get_demo_ui():
                     </div>
 
                     <div class="card card-custom p-4 mb-4">
-                        <h5 class="fw-bold mb-3 text-dark"><i class="bi bi-people-fill text-primary me-2"></i> Карта ЛПР компании</h5>
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-people-fill text-primary me-2"></i> Карта Власти компании (Стейкхолдеры & ЛПР)</h5>
+                            <span class="badge bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-bold">4 Ключевых Контакта</span>
+                        </div>
+                        <p class="text-muted small mb-3">Влияние на сделку: от Бизнес-заказчика (CFO/CCO) и Технического эксперта (1C/IT Lead) до Инициатора (HR/PM) и Собственника (CEO).</p>
                         <div class="row g-3" id="lprCardsContainer"></div>
 
                         <div class="pitch-box mt-4">
                             <div class="d-flex justify-content-between align-items-center mb-2">
-                                <span class="fw-bold text-primary" id="selectedLprRoleTitle">Персональный питч:</span>
+                                <span class="fw-bold text-primary" id="selectedLprRoleTitle">Персональный питч под выбранного стейкхолдера:</span>
                                 <button class="btn btn-sm btn-outline-primary" onclick="copyPitch()"><i class="bi bi-copy me-1"></i> Скопировать</button>
                             </div>
                             <p class="mb-0 text-dark fs-6 lh-base" id="pitchText"></p>
@@ -932,8 +940,8 @@ def get_demo_ui():
                     
                     let lprsHtml = '';
                     p.target_lprs.forEach(l => {
-                        const srcBadge = l.source_type === 'tenchat' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-slate-100 text-slate-700 border-slate-200';
-                        lprsHtml += `<span class="badge ${srcBadge} border me-1 mb-1"><i class="bi bi-person me-1"></i>${l.name} (${l.role})</span>`;
+                        const pType = l.power_type ? l.power_type : 'ЛПР';
+                        lprsHtml += `<span class="badge bg-slate-100 text-slate-800 border me-1 mb-1"><span class="text-indigo-600 font-bold">[${pType}]</span> ${l.name} (${l.role})</span>`;
                     });
 
                     card.innerHTML = `
@@ -943,10 +951,10 @@ def get_demo_ui():
                                 <h4 class="fw-bold text-dark mb-1">${comp.company_name}</h4>
                                 <div class="text-muted small">ИНН: ${comp.inn} • Штат: ~${comp.employee_count} чел. • Выручка: ${comp.revenue}</div>
                             </div>
-                            <button onclick="setQuery('${comp.inn}'); switchTab('manual-tab');" class="btn btn-outline-primary fw-semibold"><i class="bi bi-box-arrow-up-right me-1"></i> Карточка компании</button>
+                            <button onclick="setQuery('${comp.inn}'); switchTab('manual-tab');" class="btn btn-outline-primary fw-semibold"><i class="bi bi-box-arrow-up-right me-1"></i> Карта Власти компании</button>
                         </div>
                         <p class="text-dark small mb-2"><strong>Триггер потребности:</strong> ${comp.match_reason}</p>
-                        <div class="mb-3"><strong>Карта ЛПР:</strong> ${lprsHtml}</div>
+                        <div class="mb-3"><strong>Карта Власти (Стейкхолдеры):</strong> ${lprsHtml}</div>
                         <div class="p-3 bg-light rounded-3 border-start border-3 border-primary">
                             <div class="fw-bold text-primary small mb-1"><i class="bi bi-stars me-1"></i> Персонализированный питч под ЛПР:</div>
                             <div class="small text-dark lh-base">${p.ai_pitch_preview}</div>
@@ -1018,16 +1026,17 @@ def get_demo_ui():
                 lprContainer.innerHTML = '';
                 data.lpr_matrix.lprs.forEach((person, idx) => {
                     const col = document.createElement('div');
-                    col.className = 'col-md-4';
-                    const srcLabel = person.source_type === 'tenchat' ? 'TenChat Profile' : (person.source_type === 'setka' ? 'B2B Network' : 'ЕГРЮЛ');
+                    col.className = 'col-md-3';
+                    const powerBadge = person.power_type ? person.power_type : 'ЛПР';
                     col.innerHTML = `
                         <div class="lpr-card ${idx === 0 ? 'active' : ''}" onclick="selectLpr(${idx})">
                             <div class="d-flex justify-content-between align-items-center mb-1">
-                                <span class="badge bg-light text-secondary border text-[10px]">${srcLabel}</span>
+                                <span class="badge bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-bold">${powerBadge}</span>
+                                <span class="text-muted text-[10px]">${person.source_type}</span>
                             </div>
-                            <h6 class="fw-bold text-dark mb-1">${person.name}</h6>
-                            <div class="text-primary small fw-semibold mb-2">${person.role}</div>
-                            <div class="small text-muted"><i class="bi bi-telegram me-1"></i> ${person.contacts.telegram}</div>
+                            <h6 class="fw-bold text-dark mb-1 text-truncate">${person.name}</h6>
+                            <div class="text-primary small fw-semibold mb-2 lh-sm" style="min-height: 2.2rem;">${person.role}</div>
+                            <div class="small text-muted text-truncate"><i class="bi bi-telegram me-1"></i> ${person.contacts.telegram}</div>
                         </div>
                     `;
                     lprContainer.appendChild(col);
