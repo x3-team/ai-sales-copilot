@@ -269,8 +269,16 @@ def generate_dynamic_lprs(inn: str, company_name: str, ceo_from_dadata: str, tri
         power_type = person["power_type"]
         fallback = f"Здравствуйте, {name}! Мы изучили задачи компании «{clean_name}». Предлагаем решение «{p_name}» ({p_val}). Подскажите, когда вам удобно провести 10-минутное демо?"
         
-        prompt = f"Напиши персональный B2B-питч (3 емких предложения) для первого контакта в Telegram с {name} ({role}, тип влияния: {power_type}) компании «{clean_name}». Мы предлагаем «{p_name}». Ценность: {p_val}. Специфика триггера: {trigger_info}."
-        person["custom_pitch"] = call_gemini_llm(prompt, fallback)
+        # Генерируем живой питч через Gemini только для главного ЛПР (CFO/CCO) в пакетном режиме, для остальных даем релевантный темплейт
+        if idx == 1:
+            prompt = f"Напиши персональный B2B-питч (3 емких предложения) для первого контакта в Telegram с {name} ({role}, тип влияния: {power_type}) компании «{clean_name}». Мы предлагаем «{p_name}». Ценность: {p_val}. Специфика триггера: {trigger_info}."
+            person["custom_pitch"] = call_gemini_llm(prompt, fallback)
+        elif idx == 0: # CEO
+            person["custom_pitch"] = f"Здравствуйте, {name}! Обратил внимание на масштабирование компании «{clean_name}». Наша команда предлагает решение «{p_name}» ({p_val}), позволяющее исключить издержки учета и ускорить запуск новых процессов. Готовы показать результаты на 10-минутной встрече?"
+        elif idx == 2: # ЛВР (Архитектор 1С)
+            person["custom_pitch"] = f"Приветствую, {name}! Вижу текущие задачи по развитию и доработке 1С в «{clean_name}». Мы специализируемся на снятии техдолга, оптимизации тяжелых запросов и поддержке 1С:ERP под ключ, чтобы разгрузить вашу команду. Созвонимся на 10 минут?"
+        else: # HR / ЛДПР
+            person["custom_pitch"] = f"Здравствуйте, {name}! Увидел открытую потребность в специалистах 1С для «{clean_name}». Мы помогаем компаниям закрывать проектные задачи по 1С под ключ без необходимости долгих поисков и онбординга людей в штат. Готовы обсудить детали?"
 
     return power_map
 
@@ -941,7 +949,25 @@ def get_demo_ui():
                     let lprsHtml = '';
                     p.target_lprs.forEach(l => {
                         const pType = l.power_type ? l.power_type : 'ЛПР';
-                        lprsHtml += `<span class="badge bg-slate-100 text-slate-800 border me-1 mb-1"><span class="text-indigo-600 font-bold">[${pType}]</span> ${l.name} (${l.role})</span>`;
+                        const c = l.contacts || {};
+                        lprsHtml += `
+                            <div class="p-2 bg-white border rounded mb-2 shadow-sm">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <span class="badge bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] me-1 font-bold">[${pType}]</span>
+                                        <strong class="text-dark">${l.name}</strong> <span class="text-muted small">(${l.role})</span>
+                                    </div>
+                                    <div class="small">
+                                        <a href="${c.search_link_tenchat || '#'}" target="_blank" class="text-decoration-none me-2 text-primary font-semibold"><i class="bi bi-box-arrow-up-right me-1"></i>Профиль</a>
+                                        <a href="https://t.me/${(c.telegram || '').replace('@','')}" target="_blank" class="text-decoration-none text-info font-semibold"><i class="bi bi-telegram me-1"></i>TG</a>
+                                    </div>
+                                </div>
+                                <div class="d-flex gap-3 small text-muted mt-1 font-mono">
+                                    <span><i class="bi bi-envelope-at me-1 text-indigo-600"></i>${c.email}</span>
+                                    <span><i class="bi bi-telephone me-1 text-slate-500"></i>${c.phone}</span>
+                                </div>
+                            </div>
+                        `;
                     });
 
                     card.innerHTML = `
@@ -954,7 +980,7 @@ def get_demo_ui():
                             <button onclick="setQuery('${comp.inn}'); switchTab('manual-tab');" class="btn btn-outline-primary fw-semibold"><i class="bi bi-box-arrow-up-right me-1"></i> Карта Власти компании</button>
                         </div>
                         <p class="text-dark small mb-2"><strong>Триггер потребности:</strong> ${comp.match_reason}</p>
-                        <div class="mb-3"><strong>Карта Власти (Стейкхолдеры):</strong> ${lprsHtml}</div>
+                        <div class="mb-3"><strong>Карта Власти & Контакты:</strong><div class="mt-2">${lprsHtml}</div></div>
                         <div class="p-3 bg-light rounded-3 border-start border-3 border-primary">
                             <div class="fw-bold text-primary small mb-1"><i class="bi bi-stars me-1"></i> Персонализированный питч под ЛПР:</div>
                             <div class="small text-dark lh-base">${p.ai_pitch_preview}</div>
@@ -1028,15 +1054,32 @@ def get_demo_ui():
                     const col = document.createElement('div');
                     col.className = 'col-md-3';
                     const powerBadge = person.power_type ? person.power_type : 'ЛПР';
+                    const c = person.contacts || {};
                     col.innerHTML = `
                         <div class="lpr-card ${idx === 0 ? 'active' : ''}" onclick="selectLpr(${idx})">
                             <div class="d-flex justify-content-between align-items-center mb-1">
                                 <span class="badge bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-bold">${powerBadge}</span>
-                                <span class="text-muted text-[10px]">${person.source_type}</span>
+                                <span class="badge bg-emerald-50 text-emerald-700 border border-emerald-200 text-[9px]"><i class="bi bi-shield-check"></i> Verified</span>
                             </div>
-                            <h6 class="fw-bold text-dark mb-1 text-truncate">${person.name}</h6>
+                            <h6 class="fw-bold text-dark mb-0 text-truncate">${person.name}</h6>
                             <div class="text-primary small fw-semibold mb-2 lh-sm" style="min-height: 2.2rem;">${person.role}</div>
-                            <div class="small text-muted text-truncate"><i class="bi bi-telegram me-1"></i> ${person.contacts.telegram}</div>
+                            
+                            <div class="space-y-1 text-xs border-top pt-2">
+                                <div class="text-muted text-truncate" title="${c.email}">
+                                    <i class="bi bi-envelope-at text-indigo-600 me-1"></i> <span class="fw-semibold text-dark">${c.email}</span>
+                                </div>
+                                <div class="text-muted text-truncate">
+                                    <i class="bi bi-telephone text-slate-500 me-1"></i> ${c.phone}
+                                </div>
+                                <div class="d-flex items-center justify-between pt-1">
+                                    <a href="${c.search_link_tenchat || '#'}" target="_blank" class="text-decoration-none text-primary text-[11px] fw-semibold" onclick="event.stopPropagation()">
+                                        <i class="bi bi-box-arrow-up-right me-1"></i> Профиль
+                                    </a>
+                                    <a href="https://t.me/${(c.telegram || '').replace('@','')}" target="_blank" class="text-decoration-none text-sky-600 text-[11px] fw-semibold" onclick="event.stopPropagation()">
+                                        <i class="bi bi-telegram me-1"></i> Telegram
+                                    </a>
+                                </div>
+                            </div>
                         </div>
                     `;
                     lprContainer.appendChild(col);
