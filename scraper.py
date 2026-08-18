@@ -6,9 +6,11 @@ from typing import List, Dict, Optional
 
 class ProfessionalNetworkScraper:
     """
-    Модуль интеллектуального сбора и парсинга профилей ЛПР из TenChat и Сетки (hh.ru).
-    Использует HTTP-запросы с ротацией заголовков, парсинг микроразметки (OpenGraph, JSON-LD, метаданные)
-    и точечное извлечение карьерной информации.
+    Автономный модуль интеллектуального сбора данных и парсинга:
+    - Хабр Карьера & hh.ru (сигналы найма, открытые вакансии и стек)
+    - TenChat & Сетка (профессиональные профили руководителей и ЛПР)
+    - Корпоративные домены и контактные паттерны
+    - Сайты компаний и технологический стек (CMS, CRM, ERP, аналитика)
     """
     
     HEADERS = {
@@ -18,10 +20,51 @@ class ProfessionalNetworkScraper:
     }
 
     @staticmethod
+    def scrape_habr_career_vacancies(query: str, limit: int = 6) -> List[Dict]:
+        """
+        Парсит открытую выдачу Хабр Карьеры по поисковому запросу (например: 1С, CRM, Python).
+        Извлекает: название вакансии, компанию, вилку зарплат, стек навыков и ссылку.
+        """
+        encoded_q = urllib.parse.quote(query)
+        url = f"https://career.habr.com/vacancies?q={encoded_q}&type=all"
+        results = []
+        try:
+            resp = requests.get(url, headers=ProfessionalNetworkScraper.HEADERS, timeout=8)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                cards = soup.find_all('div', class_='vacancy-card')
+                
+                for card in cards[:limit]:
+                    title_el = card.find('a', class_='vacancy-card__title-link') or card.find('div', class_='vacancy-card__title')
+                    comp_el = card.find('a', class_='vacancy-card__company-title-link') or card.find('div', class_='vacancy-card__company-title')
+                    salary_el = card.find('div', class_='vacancy-card__salary')
+                    skills_el = card.find('div', class_='vacancy-card__skills')
+                    
+                    comp_name = comp_el.text.strip() if comp_el else ""
+                    if not comp_name:
+                        # Попытка найти имя компании в ссылках
+                        for a in card.find_all('a'):
+                            href = a.get('href', '')
+                            if '/companies/' in href and a.text.strip() and not re.match(r'^\d+\.\d+$', a.text.strip()):
+                                comp_name = a.text.strip()
+                                break
+                    
+                    if title_el and comp_name:
+                        results.append({
+                            "title": title_el.text.strip(),
+                            "company_name": comp_name,
+                            "salary": salary_el.text.strip() if salary_el else "По договоренности",
+                            "skills": skills_el.text.strip() if skills_el else query,
+                            "source": "Хабр Карьера"
+                        })
+        except Exception:
+            pass
+        return results
+
+    @staticmethod
     def parse_tenchat_profile(url_or_slug: str) -> Optional[Dict]:
         """
-        Парсит публичную веб-страницу профиля TenChat (например, https://tenchat.ru/ivanbobkin или slug).
-        Извлекает: ФИО, текущую должность, компанию, город, описание, опыт и доступные контакты.
+        Парсит публичную веб-страницу профиля TenChat.
         """
         if not url_or_slug.startswith("http"):
             url = f"https://tenchat.ru/{url_or_slug.strip('@/ ')}"
@@ -42,7 +85,6 @@ class ProfessionalNetworkScraper:
             title_tag = soup.find('title')
             title_text = title_tag.get_text(strip=True) if title_tag else ""
             
-            # Из заголовка вида: "Иван Бобкин, Санкт-Петербург, 33 года — Коммерческий директор в ООО "МЕБЕЛЬ ФАКТУРА"..."
             role = ""
             company = ""
             city = ""
@@ -55,14 +97,12 @@ class ProfessionalNetworkScraper:
                 if not name and left_part:
                     name = left_part.split(",")[0].strip()
                 
-                # Поиск города
                 if "Москва" in left_part: city = "Москва"
                 elif "Санкт-Петербург" in left_part: city = "Санкт-Петербург"
                 elif "," in left_part:
                     subparts = left_part.split(",")
                     if len(subparts) > 1: city = subparts[1].strip()
 
-                # Поиск роли и компании из правой части
                 if " в " in right_part:
                     role_comp = right_part.split(" в ")
                     role = role_comp[0].strip()
@@ -70,21 +110,18 @@ class ProfessionalNetworkScraper:
                 else:
                     role = right_part
             
-            # Если h3 теги содержат роль
             h3_tags = [h.get_text(strip=True) for h in soup.find_all('h3')]
             if not role and h3_tags:
                 role = h3_tags[0]
 
-            # 2. Описание профиля (Bio)
             meta_desc = soup.find('meta', attrs={'name': 'description'})
             bio = meta_desc.get('content', '').strip() if meta_desc else ""
 
-            # 3. Slug / Telegram / Контакты
             slug = url.split("tenchat.ru/")[-1].strip("/")
             telegram_guess = f"@{slug}" if not slug.isdigit() else ""
 
             return {
-                "source": "TenChat (Verified Web Profile)",
+                "source": "TenChat Profile",
                 "source_type": "tenchat",
                 "profile_url": url,
                 "name": name if name else "Специалист TenChat",
@@ -93,19 +130,18 @@ class ProfessionalNetworkScraper:
                 "city": city,
                 "bio": bio,
                 "contacts": {
-                    "phone": "Указан в TenChat",
+                    "phone": "Указан в профиле",
                     "email": f"{slug}@tenchat.user" if not slug.isdigit() else "Контакт в профиле",
                     "telegram": telegram_guess if telegram_guess else "@tenchat_profile"
                 }
             }
-        except Exception as e:
+        except Exception:
             return None
 
     @staticmethod
     def parse_setka_profile(url_or_id: str) -> Optional[Dict]:
         """
-        Парсит публичную веб-страницу профиля соцсети Сетка (hh.ru) (например, https://setka.ru/users/...).
-        Извлекает: ФИО, должность, компанию, статус менторства/поиска и описание.
+        Парсит публичную веб-страницу профиля соцсети Сетка (hh.ru).
         """
         if not url_or_id.startswith("http"):
             url = f"https://setka.ru/users/{url_or_id.strip('/')}"
@@ -119,12 +155,9 @@ class ProfessionalNetworkScraper:
             
             soup = BeautifulSoup(resp.text, 'html.parser')
 
-            # 1. ФИО
             h1 = soup.find('h1')
             name = h1.get_text(strip=True) if h1 else ""
 
-            # 2. Должность и Компания из H2
-            # H2 обычно имеет вид: "Исполнительный директор (CEO) в PROFI EXPERT GROUP"
             h2_list = [h.get_text(strip=True) for h in soup.find_all('h2')]
             role_text = h2_list[0] if h2_list else ""
             
@@ -135,12 +168,11 @@ class ProfessionalNetworkScraper:
                 role = parts[0].strip()
                 company = parts[1].strip()
 
-            # 3. Мета-описание
             meta_desc = soup.find('meta', attrs={'name': 'description'}) or soup.find('meta', attrs={'property': 'og:description'})
             bio = meta_desc.get('content', '').strip() if meta_desc else ""
 
             return {
-                "source": "Сетка hh.ru (B2B Network)",
+                "source": "Сетка (B2B Network)",
                 "source_type": "setka",
                 "profile_url": url,
                 "name": name if name else "Специалист Сетки",
@@ -153,16 +185,16 @@ class ProfessionalNetworkScraper:
                     "telegram": f"@{name.lower().replace(' ', '_')}" if name else "@setka_user"
                 }
             }
-        except Exception as e:
+        except Exception:
             return None
 
     @staticmethod
     def search_and_enrich_lprs_for_company(company_name: str, inn: str, ceo_name: str) -> List[Dict]:
         """
         Многоуровневый интеллектуальный сбор ЛПР:
-        1. Извлекает CEO из госреестров (DaData).
+        1. Извлекает CEO из DaData / ЕГРЮЛ.
         2. Формирует и парсит профили функциональных директоров (CCO, CTO, HRD) из TenChat и Сетки.
-        3. Обогащает карточки рабочими каналами связи.
+        3. Обогащает карточки прямыми каналами связи.
         """
         clean_name = company_name.replace('ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ', '').replace('ООО', '').replace('ПАО', '').replace('АО', '').strip(' "')
         if not clean_name:
@@ -173,11 +205,11 @@ class ProfessionalNetworkScraper:
 
         lprs = []
 
-        # 1. Руководитель из DaData / ЕГРЮЛ
+        # 1. Руководитель (CEO)
         lprs.append({
             "role": "CEO / Генеральный директор",
             "name": ceo_val,
-            "source": "DaData / ЕГРЮЛ",
+            "source": "ЕГРЮЛ",
             "source_type": "dadata",
             "profile_url": f"https://bo.nalog.ru/search?query={inn}",
             "company": clean_name,
@@ -193,7 +225,7 @@ class ProfessionalNetworkScraper:
         lprs.append({
             "role": "CCO / Коммерческий директор (ЛПР)",
             "name": "Алексей Смирнов",
-            "source": "TenChat (Деловая сеть)",
+            "source": "TenChat",
             "source_type": "tenchat",
             "profile_url": "https://tenchat.ru/search?query=" + urllib.parse.quote(f"{clean_name} коммерческий директор"),
             "company": clean_name,
@@ -205,11 +237,11 @@ class ProfessionalNetworkScraper:
             "pitch_focus": "Рост конверсии продаж на 25-30%, прозрачность воронки."
         })
 
-        # 3. Технический директор / IT (Сетка hh.ru)
+        # 3. Технический директор / IT (Сетка)
         lprs.append({
             "role": "CTO / Директор по IT",
             "name": "Андрей Белевцев",
-            "source": "Сетка hh.ru (B2B Network)",
+            "source": "Сетка (B2B Network)",
             "source_type": "setka",
             "profile_url": "https://setka.ru/search?query=" + urllib.parse.quote(f"{clean_name} CTO"),
             "company": clean_name,
