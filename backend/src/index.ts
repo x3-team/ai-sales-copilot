@@ -10,6 +10,10 @@ import {
   handleObjection,
   analyzeTranscript,
 } from "./services/gemini";
+import {
+  searchHHVacancies,
+  enrichCompanyData,
+} from "./services/enrichment";
 
 dotenv.config();
 
@@ -32,10 +36,44 @@ app.get("/api/health", (req, res) => {
     status: "ok",
     timestamp: new Date().toISOString(),
     geminiConfigured: isGeminiConfigured(),
+    hhConfigured: !!process.env.HH_API_TOKEN,
+    dadataConfigured: !!process.env.DADATA_API_KEY,
     message: isGeminiConfigured()
       ? "AI Sales Copilot backend is ready with Gemini 1.5 Flash!"
       : "AI Sales Copilot backend is running in SIMULATED DEMO mode. Set GEMINI_API_KEY to unlock AI features.",
   });
+});
+
+/**
+ * Search HH.ru vacancies
+ */
+app.get("/api/hh/vacancies", async (req, res) => {
+  try {
+    const query = (req.query.q as string) || "Менеджер по продажам";
+    const city = (req.query.city as string) || "1";
+    const vacancies = await searchHHVacancies(query, city);
+    res.json({ vacancies });
+  } catch (error: any) {
+    console.error("Error fetching HH vacancies:", error);
+    res.status(500).json({ error: error.message || "Failed to fetch vacancies from HH.ru" });
+  }
+});
+
+/**
+ * Enrich company via DaData
+ */
+app.post("/api/dadata/company", async (req, res) => {
+  try {
+    const { company } = req.body;
+    if (!company) {
+      return res.status(400).json({ error: "Company name or INN is required" });
+    }
+    const suggestions = await enrichCompanyData(company);
+    res.json({ suggestions });
+  } catch (error: any) {
+    console.error("Error enriching company via DaData:", error);
+    res.status(500).json({ error: error.message || "Failed to enrich company data" });
+  }
 });
 
 /**

@@ -11,7 +11,9 @@ import {
   AlertCircle,
   Info,
   Users,
-  Copy
+  Copy,
+  Building,
+  Briefcase
 } from "lucide-react";
 
 // API Base URL (default to localhost 3001, or fallback to current host port 3001)
@@ -78,19 +80,28 @@ export default function App() {
   const [evaluation, setEvaluation] = useState<any | null>(null);
   const [evaluating, setEvaluating] = useState<boolean>(false);
 
-  // 2. Email State
+  // 2. Email & Lead Enrichment State
   const [emailForm, setEmailForm] = useState({
     productName: "AI Sales Copilot",
     productDesc: "An AI-powered sales training platform that runs instant interactive buyer roleplays, email templates generation, and transcript audits.",
-    recipientName: "John Doe",
-    recipientTitle: "VP of Sales",
-    companyName: "HyperGrowth Inc.",
-    painPoint: "Inefficient sales rep onboarding and inconsistent qualification of outbound leads",
-    emailGoal: "booking a brief 10-minute introduction call next Tuesday",
+    recipientName: "Иван Иванов",
+    recipientTitle: "Коммерческий директор",
+    companyName: "Сбербанк",
+    painPoint: "Длительный цикл сделки и низкая конверсия новых менеджеров",
+    emailGoal: "назначение 15-минутной онлайн-демонстрации",
     tone: "professional"
   });
   const [generatedEmail, setGeneratedEmail] = useState<any | null>(null);
   const [emailLoading, setEmailLoading] = useState<boolean>(false);
+
+  // Integrations (HH.ru & DaData) State
+  const [hhSearchQuery, setHhSearchQuery] = useState<string>("Менеджер по продажам");
+  const [hhVacancies, setHhVacancies] = useState<any[]>([]);
+  const [hhLoading, setHhLoading] = useState<boolean>(false);
+
+  const [dadataQuery, setDadataQuery] = useState<string>("7707083893");
+  const [dadataResults, setDadataResults] = useState<any[]>([]);
+  const [dadataLoading, setDadataLoading] = useState<boolean>(false);
 
   // 3. Objection State
   const [objectionForm, setObjectionForm] = useState({
@@ -275,6 +286,41 @@ Harold (CFO): Sure, send a calendar hold and we'll see.`
       alert("Error generating email: " + err.message);
     } finally {
       setEmailLoading(false);
+    }
+  };
+
+  // Integration Functions (HH.ru & DaData)
+  const handleHHSearch = async () => {
+    if (!hhSearchQuery.trim()) return;
+    setHhLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/hh/vacancies?q=${encodeURIComponent(hhSearchQuery)}`);
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+      setHhVacancies(data.vacancies || []);
+    } catch (err: any) {
+      alert("Error fetching HH vacancies: " + err.message);
+    } finally {
+      setHhLoading(false);
+    }
+  };
+
+  const handleDaDataEnrich = async () => {
+    if (!dadataQuery.trim()) return;
+    setDadataLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/dadata/company`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ company: dadataQuery })
+      });
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+      setDadataResults(data.suggestions || []);
+    } catch (err: any) {
+      alert("Error enriching via DaData: " + err.message);
+    } finally {
+      setDadataLoading(false);
     }
   };
 
@@ -839,7 +885,7 @@ Harold (CFO): Sure, send a calendar hold and we'll see.`
                   <button
                     onClick={handleGenerateEmail}
                     disabled={emailLoading}
-                    className="w-full mt-4 bg-violet-600 hover:bg-violet-700 disabled:bg-violet-400 text-white font-semibold py-3 rounded-xl shadow-lg shadow-violet-600/10 transition flex items-center justify-center gap-2"
+                    className="w-full mt-2 bg-violet-600 hover:bg-violet-700 disabled:bg-violet-400 text-white font-semibold py-3 rounded-xl shadow-lg shadow-violet-600/10 transition flex items-center justify-center gap-2"
                   >
                     {emailLoading ? (
                       <>
@@ -851,6 +897,52 @@ Harold (CFO): Sure, send a calendar hold and we'll see.`
                       </>
                     )}
                   </button>
+
+                  {/* HH.ru Lead Discovery Integration */}
+                  <div className="border-t border-slate-200 pt-4 flex flex-col gap-2">
+                    <label className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <Briefcase className="h-4 w-4 text-red-500" /> HH.ru Vacancies Lead Scraper
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={hhSearchQuery}
+                        onChange={(e) => setHhSearchQuery(e.target.value)}
+                        placeholder="Search HH jobs..."
+                        className="flex-1 text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-red-500"
+                      />
+                      <button
+                        onClick={handleHHSearch}
+                        disabled={hhLoading}
+                        className="bg-red-500 hover:bg-red-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition shrink-0"
+                      >
+                        {hhLoading ? "..." : "Find Leads"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* DaData Company Enrichment Integration */}
+                  <div className="border-t border-slate-200 pt-3 flex flex-col gap-2">
+                    <label className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <Building className="h-4 w-4 text-blue-500" /> DaData Company Enrichment
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={dadataQuery}
+                        onChange={(e) => setDadataQuery(e.target.value)}
+                        placeholder="Enter Company Name or INN..."
+                        className="flex-1 text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500"
+                      />
+                      <button
+                        onClick={handleDaDataEnrich}
+                        disabled={dadataLoading}
+                        className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition shrink-0"
+                      >
+                        {dadataLoading ? "..." : "Enrich Data"}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -915,6 +1007,80 @@ Harold (CFO): Sure, send a calendar hold and we'll see.`
                         </div>
                       </div>
                     </div>
+
+                    {/* HH.ru Scraped Vacancies Results */}
+                    {hhVacancies.length > 0 && (
+                      <div className="bg-white border border-red-200 rounded-2xl overflow-hidden shadow-sm">
+                        <div className="bg-red-50 px-5 py-3 border-b border-red-200 flex justify-between items-center">
+                          <span className="text-xs font-bold text-red-900 flex items-center gap-1.5">
+                            <Briefcase className="h-4 w-4 text-red-600" /> HH.ru Found Vacancies ({hhVacancies.length})
+                          </span>
+                        </div>
+                        <div className="p-4 flex flex-col gap-3 max-h-60 overflow-y-auto">
+                          {hhVacancies.map((v) => (
+                            <div key={v.id} className="p-3 bg-red-50/30 rounded-xl border border-red-100 flex flex-col gap-1">
+                              <div className="flex justify-between items-start">
+                                <span className="font-bold text-xs text-slate-900">{v.name}</span>
+                                <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                                  {v.salary?.from ? `${v.salary.from} ${v.salary.currency || "RUB"}` : "З/П не указана"}
+                                </span>
+                              </div>
+                              <span className="text-[11px] text-slate-600">{v.employer?.name}</span>
+                              {v.snippet?.requirement && (
+                                <p className="text-[10px] text-slate-500 line-clamp-2 mt-1">{v.snippet.requirement}</p>
+                              )}
+                              <button
+                                onClick={() => {
+                                  setEmailForm({
+                                    ...emailForm,
+                                    companyName: v.employer?.name || emailForm.companyName,
+                                    recipientTitle: v.name || emailForm.recipientTitle,
+                                    painPoint: v.snippet?.requirement || emailForm.painPoint,
+                                  });
+                                }}
+                                className="mt-1 self-start text-[10px] text-violet-600 font-bold hover:underline"
+                              >
+                                ↙️ Use this vacancy as Email target
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* DaData Enriched Company Results */}
+                    {dadataResults.length > 0 && (
+                      <div className="bg-white border border-blue-200 rounded-2xl overflow-hidden shadow-sm">
+                        <div className="bg-blue-50 px-5 py-3 border-b border-blue-200 flex justify-between items-center">
+                          <span className="text-xs font-bold text-blue-900 flex items-center gap-1.5">
+                            <Building className="h-4 w-4 text-blue-600" /> DaData Verified Company Details
+                          </span>
+                        </div>
+                        <div className="p-4 flex flex-col gap-3">
+                          {dadataResults.map((c, idx) => (
+                            <div key={idx} className="p-3 bg-blue-50/30 rounded-xl border border-blue-100 flex flex-col gap-1 text-xs text-slate-800">
+                              <div className="font-bold text-slate-900">{c.name}</div>
+                              {c.inn && <div><strong>ИНН:</strong> {c.inn} {c.ogrn ? `| ОГРН: ${c.ogrn}` : ""}</div>}
+                              {c.management?.name && <div><strong>Руководитель:</strong> {c.management.name} ({c.management.post || "Директор"})</div>}
+                              {c.address && <div className="text-[11px] text-slate-500"><strong>Адрес:</strong> {c.address}</div>}
+                              <button
+                                onClick={() => {
+                                  setEmailForm({
+                                    ...emailForm,
+                                    companyName: c.name || emailForm.companyName,
+                                    recipientName: c.management?.name || emailForm.recipientName,
+                                    recipientTitle: c.management?.post || emailForm.recipientTitle,
+                                  });
+                                }}
+                                className="mt-1 self-start text-[10px] text-violet-600 font-bold hover:underline"
+                              >
+                                ↙️ Fill Company & Leader into Email Form
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
