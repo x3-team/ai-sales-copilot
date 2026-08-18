@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
+from scraper import ProfessionalNetworkScraper
 
 app = FastAPI(title="AI Sales Copilot Production Pilot")
 
@@ -253,53 +254,21 @@ def generate_dynamic_lprs(inn: str, company_name: str, ceo_from_dadata: str, tri
     if not clean_name:
         clean_name = "Компания"
 
-    domain = clean_name.lower().replace(' ', '').replace('-', '') + ".ru"
-    ceo_name = ceo_from_dadata if ceo_from_dadata else "Управляющий директор"
+    # Вызываем многоуровневый скрейпер ЛПР
+    scraped_lprs = ProfessionalNetworkScraper.search_and_enrich_lprs_for_company(clean_name, inn, ceo_from_dadata)
 
-    # Шаблоны базовых питчей
     p_name = current_seller_profile.product_name
     p_val = current_seller_profile.value_proposition
 
-    fallback_ceo = f"Здравствуйте, {ceo_name}! Проанализировали компанию «{clean_name}». Наша команда предлагает решение «{p_name}». Для вашего бизнеса это позволит: {p_val}. Когда вам удобно провести короткую встречу?"
-    fallback_cco = f"Алексей, здравствуйте! Видим активное развитие коммерческого блока в «{clean_name}». С помощью «{p_name}» вы сможете закрывать сделки на 25-30% быстрее. Готовы показать живое демо?"
-    fallback_cto = f"Андрей, день добрый! Для инфраструктуры «{clean_name}» предлагаем готовый модуль «{p_name}» с безопасной API-интеграцией и поддержкой On-Premise. Созвонимся на 10 минут?"
+    # Персонализируем питчи под найденные профили через Gemini Flash
+    for person in scraped_lprs:
+        role = person["role"]
+        name = person["name"]
+        prompt = f"Напиши персональный B2B-питч (3 емких предложения) для первого контакта в Telegram с {name} ({role}) компании «{clean_name}». Мы предлагаем «{p_name}». Ценность: {p_val}. Специфика триггера: {trigger_info}."
+        fallback = f"Здравствуйте, {name}! Мы изучили задачи компании «{clean_name}». Предлагаем решение «{p_name}» ({p_val}). Подскажите, когда вам удобно провести 10-минутное демо?"
+        person["custom_pitch"] = call_gemini_llm(prompt, fallback)
 
-    # Генерация живых питчей через Gemini Flash с контекстом роли
-    prompt_ceo = f"Напиши профессиональный B2B-питч (3 предложения) для первого контакта в Telegram с CEO компании «{clean_name}» ({ceo_name}). Мы продаем «{p_name}». Ценность: {p_val}. Триггер: {trigger_info}."
-    prompt_cco = f"Напиши емкий B2B-питч (3 предложения) для первого контакта в Telegram с Коммерческим директором (CCO) Алексеем компании «{clean_name}». Мы продаем «{p_name}». Ценность: {p_val}. Сделай фокус на выполнение плана продаж и воронку."
-    
-    ceo_pitch = call_gemini_llm(prompt_ceo, fallback_ceo)
-    cco_pitch = call_gemini_llm(prompt_cco, fallback_cco)
-
-    return [
-        {
-            "role": "CEO / Генеральный директор",
-            "name": ceo_name,
-            "source": "DaData / ЕГРЮЛ",
-            "source_type": "dadata",
-            "contacts": {"phone": "+7 (495) 100-20-30", "email": f"ceo@{domain}", "telegram": f"@{domain.split('.')[0]}_ceo"},
-            "pitch_focus": "Стратегический ROI, капитализация, рост бизнеса.",
-            "custom_pitch": ceo_pitch
-        },
-        {
-            "role": "CCO / Коммерческий директор (ЛПР)",
-            "name": "Алексей Смирнов",
-            "source": "Сетка hh.ru (B2B Network)",
-            "source_type": "setka",
-            "contacts": {"phone": "+7 (926) 450-88-99", "email": f"a.smirnov@{domain}", "telegram": f"@smirnov_{domain.split('.')[0]}"},
-            "pitch_focus": "Рост конверсии продаж на 25-30%, прозрачность CRM.",
-            "custom_pitch": cco_pitch
-        },
-        {
-            "role": "CTO / Директор по IT",
-            "name": "Андрей Белевцев",
-            "source": "Сетка hh.ru / Habr",
-            "source_type": "setka",
-            "contacts": {"phone": "+7 (916) 333-22-11", "email": f"cto@{domain}", "telegram": f"@belevtsev_tech"},
-            "pitch_focus": "Безопасность, On-Premise, легкая интеграция по API.",
-            "custom_pitch": fallback_cto
-        }
-    ]
+    return scraped_lprs
 
 def generate_dynamic_hh_vacancies(inn: str, company_name: str):
     clean_name = company_name.replace('ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ', '').replace('ООО', '').replace('ПАО', '').replace('АО', '').strip(' "')
@@ -940,7 +909,8 @@ def get_demo_ui():
                     
                     let lprsHtml = '';
                     p.target_lprs.forEach(l => {
-                        lprsHtml += `<span class="badge bg-light text-dark border me-1 mb-1"><i class="bi bi-person me-1"></i>${l.name} (${l.role})</span>`;
+                        const srcBadge = l.source_type === 'tenchat' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-slate-100 text-slate-700 border-slate-200';
+                        lprsHtml += `<span class="badge ${srcBadge} border me-1 mb-1"><i class="bi bi-person me-1"></i>${l.name} (${l.role})</span>`;
                     });
 
                     card.innerHTML = `
@@ -1026,8 +996,12 @@ def get_demo_ui():
                 data.lpr_matrix.lprs.forEach((person, idx) => {
                     const col = document.createElement('div');
                     col.className = 'col-md-4';
+                    const srcLabel = person.source_type === 'tenchat' ? 'TenChat Profile' : (person.source_type === 'setka' ? 'B2B Network' : 'ЕГРЮЛ');
                     col.innerHTML = `
                         <div class="lpr-card ${idx === 0 ? 'active' : ''}" onclick="selectLpr(${idx})">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <span class="badge bg-light text-secondary border text-[10px]">${srcLabel}</span>
+                            </div>
                             <h6 class="fw-bold text-dark mb-1">${person.name}</h6>
                             <div class="text-primary small fw-semibold mb-2">${person.role}</div>
                             <div class="small text-muted"><i class="bi bi-telegram me-1"></i> ${person.contacts.telegram}</div>
