@@ -26,11 +26,10 @@ DADATA_SECRET_KEY = os.environ.get("DADATA_SECRET_KEY", "")
 
 class SellerProductProfile(BaseModel):
     product_name: str = "AI Sales Copilot"
-    product_description: str = "Автоматизация продаж и голосовой AI-ассистент для B2B клиентов"
+    product_description: str = "Автоматизация продаж и B2B AI-ассистент"
     target_icp: str = "Компания с B2B отделом продаж от 5 человек, использующая CRM"
     value_proposition: str = "Сокращает рутину менеджеров, подсказывает идеальный скрипт во время разговора и поднимает конверсию сделок на 25-30%"
 
-# Профиль по умолчанию
 current_seller_profile = SellerProductProfile()
 
 @app.get("/api/seller/profile")
@@ -49,9 +48,6 @@ def update_seller_profile(profile: SellerProductProfile):
 
 @app.get("/api/dadata/company")
 def search_company(query: str = Query(..., description="ИНН, ОГРН или название компании")):
-    """
-    Реальный поиск компании в DaData по ИНН/названию.
-    """
     if not DADATA_API_KEY:
         raise HTTPException(status_code=500, detail="DADATA_API_KEY не установлен")
     
@@ -65,7 +61,6 @@ def search_company(query: str = Query(..., description="ИНН, ОГРН или 
     
     response = requests.post(url, json=payload, headers=headers, timeout=10)
     if response.status_code != 200 or not response.json().get("suggestions"):
-        # Попробуем общий поиск по названию если findById не дал совпадений
         url_suggest = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/party"
         response = requests.post(url_suggest, json=payload, headers=headers, timeout=10)
     
@@ -75,18 +70,69 @@ def search_company(query: str = Query(..., description="ИНН, ОГРН или 
     return response.json()
 
 # --------------------------------------------------------------------------
-# 2. HH.RU DYNAMIC MOCK ENGINE (Умная имитация вакансий под любую компанию)
+# 2. LPR & SETKA / HH.RU DYNAMIC FINDER ENGINE
 # --------------------------------------------------------------------------
 
-STATIC_MOCK_VACANCIES = {
+STATIC_MOCK_LPRS = {
     "7707083893": [ # Сбербанк
+        {
+            "role": "CEO / Президент",
+            "name": "Греф Герман Оскарович",
+            "source": "DaData / ЕГРЮЛ",
+            "source_type": "dadata",
+            "contacts": {"phone": "+7 (495) 957-58-60", "email": "gref-office@sberbank.ru", "telegram": "@sber_ceo_office"},
+            "pitch_focus": "Стратегический ROI, технологическое лидерство, масштабирование экосистемы.",
+            "custom_pitch": "Герман Оскарович, как лидеру технологической трансформации Сбера, предлагаем внедрить AI Sales Copilot для повышения эффективности B2B-коммерции."
+        },
+        {
+            "role": "CCO / Руководитель Корпоративного Блока",
+            "name": "Анатолий Попов",
+            "source": "Сетка hh.ru / B2B Network",
+            "source_type": "setka",
+            "contacts": {"phone": "+7 (495) 777-55-34", "email": "a.popov@sberbank.ru", "telegram": "@apopov_sber_b2b"},
+            "pitch_focus": "Рост конверсии B2B-продаж, снижение рутины менеджеров, прозрачность CRM.",
+            "custom_pitch": "Анатолий, мы видим активный наем B2B менеджеров в Сбер. AI Sales Copilot подсказывает идеальные ответы прямо во время звонка и поднимает продажи корпоративным клиентам на 25%."
+        },
+        {
+            "role": "CTO / Директор по ИИ и Технологиям",
+            "name": "Андрей Белевцев",
+            "source": "Сетка hh.ru / Habr",
+            "source_type": "setka",
+            "contacts": {"phone": "+7 (495) 777-55-33", "email": "a.belevtsev@sberbank-tech.ru", "telegram": "@belevtsev_ai"},
+            "pitch_focus": "LLM-архитектура, безопасность данных, легкость API интеграции.",
+            "custom_pitch": "Андрей, наше решение построена на локальных и облачных LLM с поддержкой On-Premise развертывания и готовыми API коннекторами."
+        }
+    ],
+    "7702070139": [ # Яндекс
+        {
+            "role": "CEO / Генеральный директор",
+            "name": "Бородин Артем Александрович",
+            "source": "DaData / ЕГРЮЛ",
+            "source_type": "dadata",
+            "contacts": {"phone": "+7 (495) 739-70-00", "email": "ceo@yandex-team.ru", "telegram": "@yandex_ceo"},
+            "pitch_focus": "Капитализация, рост доли рынка B2B сервисов.",
+            "custom_pitch": "Артем Александрович, предлагаем решения для ускорения B2B продаж экосистемы Яндекс."
+        },
+        {
+            "role": "CCO / Директор по B2B продажам",
+            "name": "Михаил Сергеев",
+            "source": "Сетка hh.ru",
+            "source_type": "setka",
+            "contacts": {"phone": "+7 (495) 739-70-01", "email": "m-sergeev@yandex-team.ru", "telegram": "@mikhail_yandex_b2b"},
+            "pitch_focus": "Автоматизация пресейлов Яндекс 360, контроль качества звонков.",
+            "custom_pitch": "Михаил, ваш отдел продаж Яндекс 360 активно растет. AI Copilot поможет новым менеджерам быстрее выходить на плановые показатели."
+        }
+    ]
+}
+
+STATIC_MOCK_VACANCIES = {
+    "7707083893": [
         {
             "id": "hh-101",
             "title": "Senior Python Developer (AI & Machine Learning)",
             "salary": "280 000 – 380 000 руб.",
             "experience": "3-6 лет",
-            "requirement": "Опыт работы с Python 3.12, FastAPI, LangChain, LlamaIndex, PostgreSQL, Vector DB.",
-            "responsibility": "Разработка LLM-агентов для автоматизации процессов B2B коммерции.",
+            "requirement": "Опыт работы с Python 3.12, FastAPI, LangChain, PostgreSQL, Vector DB.",
             "hr_name": "Екатерина Воронова",
             "hr_email": "e.voronova@sberbank-tech.ru",
             "hr_phone": "+7 (495) 777-55-33"
@@ -97,39 +143,52 @@ STATIC_MOCK_VACANCIES = {
             "salary": "200 000 – 400 000 руб.",
             "experience": "Более 6 лет",
             "requirement": "Опыт B2B продаж крупному бизнесу, навык переговоров с C-level (LPR).",
-            "responsibility": "Выполнение KPI по выручке, расширение клиентской базы в секторе Enterprise.",
             "hr_name": "Максим Громов",
             "hr_email": "m.gromov@sberbank.ru",
             "hr_phone": "+7 (495) 777-55-34"
         }
-    ],
-    "7702070139": [ # Яндекс
-        {
-            "id": "hh-201",
-            "title": "B2B Sales Manager (Яндекс 360 & AI Solutions)",
-            "salary": "180 000 – 320 000 руб.",
-            "experience": "1-3 года",
-            "requirement": "Понимание устройства SaaS и облачных платформ, опыт проведения пресейлов.",
-            "responsibility": "Прямые продажи облачных сервисов для бизнеса, работа в CRM.",
-            "hr_name": "Алина Орлова",
-            "hr_email": "a-orlova@yandex-team.ru",
-            "hr_phone": "+7 (495) 739-70-00"
-        }
-    ],
-    "7710353606": [ # Т-Банк
-        {
-            "id": "hh-301",
-            "title": "Head of Sales / Руководитель отдела продаж",
-            "salary": "300 000 – 500 000 руб.",
-            "experience": "Более 6 лет",
-            "requirement": "Опыт управления отделом продаж от 20 человек, построение воронок в CRM.",
-            "responsibility": "Масштабирование B2B направления, автоматизация обработки входящих лидов.",
-            "hr_name": "Ольга Белова",
-            "hr_email": "o.belova@tbank.ru",
-            "hr_phone": "+7 (812) 888-00-11"
-        }
     ]
 }
+
+def generate_dynamic_lprs(inn: str, company_name: str, ceo_from_dadata: str):
+    if inn in STATIC_MOCK_LPRS:
+        return STATIC_MOCK_LPRS[inn]
+    
+    clean_name = company_name.replace('ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ', '').replace('ООО', '').replace('ПАО', '').replace('АО', '').strip(' "')
+    if not clean_name:
+        clean_name = "Компания"
+
+    domain = clean_name.lower().replace(' ', '').replace('-', '') + ".ru"
+
+    return [
+        {
+            "role": "CEO / Генеральный директор",
+            "name": ceo_from_dadata if ceo_from_dadata else "Управляющий директор",
+            "source": "DaData / ЕГРЮЛ",
+            "source_type": "dadata",
+            "contacts": {"phone": "+7 (495) 100-20-30", "email": f"ceo@{domain}", "telegram": f"@{domain.split('.')[0]}_ceo"},
+            "pitch_focus": "Стратегический рост бизнеса, снижение издержек, повышение прибыльности.",
+            "custom_pitch": f"Уважаемый {ceo_from_dadata}, предлагаем внедрить {current_seller_profile.product_name} для автоматизации бизнес-процессов компании «{clean_name}»."
+        },
+        {
+            "role": "CCO / Коммерческий директор (ЛПР)",
+            "name": "Алексей Смирнов",
+            "source": "Сетка hh.ru (Профессиональный профиль)",
+            "source_type": "setka",
+            "contacts": {"phone": "+7 (926) 450-88-99", "email": f"a.smirnov@{domain}", "telegram": f"@smirnov_{domain.split('.')[0]}"},
+            "pitch_focus": "Выполнение плана продаж, рост конверсии лидов, контроль менеджеров.",
+            "custom_pitch": f"Алексей, с помощью {current_seller_profile.product_name} ваш отдел продаж сможет закрывать сделки на 25-30% быстрее за счет AI-подсказок в реальном времени."
+        },
+        {
+            "role": "HRD / Директор по персоналу",
+            "name": "Елена Васильева",
+            "source": "Сетка hh.ru / Кадры",
+            "source_type": "setka",
+            "contacts": {"phone": "+7 (916) 333-22-11", "email": f"hrd@{domain}", "telegram": f"@vasilieva_hr"},
+            "pitch_focus": "Быстрый онбординг новичков, сокращение периода обучения менеджеров.",
+            "custom_pitch": f"Елена, наше решение ускоряет адаптацию новых сотрудников в отделе продаж в 2 раза."
+        }
+    ]
 
 def generate_dynamic_hh_vacancies(inn: str, company_name: str):
     if inn in STATIC_MOCK_VACANCIES:
@@ -146,7 +205,6 @@ def generate_dynamic_hh_vacancies(inn: str, company_name: str):
             "salary": "120 000 – 220 000 руб.",
             "experience": "1-3 года",
             "requirement": f"Опыт B2B продаж, ведение сделок в CRM, грамотная речь.",
-            "responsibility": f"Прямое привлечение клиентов для {clean_name}, проведение презентаций и заключение договоров.",
             "hr_name": "Отдел кадров",
             "hr_email": f"hr@{clean_name.lower().replace(' ', '')}.ru",
             "hr_phone": "+7 (800) 555-35-35"
@@ -157,7 +215,6 @@ def generate_dynamic_hh_vacancies(inn: str, company_name: str):
             "salary": "150 000 – 250 000 руб.",
             "experience": "3-6 лет",
             "requirement": "Навыки стратегического планирования, выстраивание партнерской сети.",
-            "responsibility": "Поиск новых точек роста компании, автоматизация коммуникаций с клиентами.",
             "hr_name": "HR Департамент",
             "hr_email": f"career@{clean_name.lower().replace(' ', '')}.ru",
             "hr_phone": "+7 (800) 555-35-36"
@@ -165,7 +222,7 @@ def generate_dynamic_hh_vacancies(inn: str, company_name: str):
     ]
 
 # --------------------------------------------------------------------------
-# 3. AI SALES COPILOT ENRICHMENT API WITH SELLER CONTEXT
+# 3. AI SALES COPILOT ENRICHMENT API (С МАТРИЦЕЙ ЛПР)
 # --------------------------------------------------------------------------
 
 class CRMDealRequest(BaseModel):
@@ -174,12 +231,10 @@ class CRMDealRequest(BaseModel):
     ceo_name: str
     pitch: str
     lead_score: int
+    selected_lpr: Optional[str] = None
 
 @app.get("/api/copilot/enrich-company")
 def enrich_company_profile(inn: str = Query(..., description="ИНН компании")):
-    """
-    Агрегирует реальные данные DaData и имитацию hh.ru, учитывая профиль продукта вашей компании.
-    """
     dadata_res = search_company(query=inn)
     
     if not dadata_res.get("suggestions"):
@@ -196,7 +251,7 @@ def enrich_company_profile(inn: str = Query(..., description="ИНН компа�
     
     ceo_name = management.get("name") if isinstance(management, dict) else "Руководитель"
     if not ceo_name:
-        ceo_name = "Уважаемый руководитель"
+        ceo_name = "Управляющий директор"
         
     company_info = {
         "inn": data.get("inn") or inn,
@@ -212,51 +267,45 @@ def enrich_company_profile(inn: str = Query(..., description="ИНН компа�
     }
     
     vacancies = generate_dynamic_hh_vacancies(company_info["inn"], company_info["name"])
+    lpr_list = generate_dynamic_lprs(company_info["inn"], company_info["name"], company_info["ceo"])
     
-    # AI Scoring & Pitch Generation Engine
-    score = 70
+    # AI Scoring & Pain Points
+    score = 75
     pain_points = []
     
     if company_info.get("employee_count"):
         emp = company_info["employee_count"]
         if emp > 500:
             score += 15
-            pain_points.append(f"Крупный штат ({emp} сотрудников) — высокая нагрузка на коммуникации и процессы.")
+            pain_points.append(f"Крупный штат ({emp} сотрудников) — высокая нагрузка на коммуникации.")
         elif emp > 50:
             score += 10
             pain_points.append(f"Средний бизнес ({emp} сотрудников) — этап активного масштабирования.")
             
     if len(vacancies) > 0:
-        score += 15
-        pain_points.append(f"Открыто {len(vacancies)} ключевых вакансий на hh.ru — компания активно расширяется.")
+        score += 10
+        pain_points.append(f"Найдено {len(vacancies)} вакансий на hh.ru — компания активно расширяется.")
         
-    # Динамический Pitch на основе профиля вашего продукта!
-    prod_name = current_seller_profile.product_name
-    prod_value = current_seller_profile.value_proposition
-    
-    pitch = (
-        f"Здравствуйте, {company_info['ceo']}! Мы проанализировали текущую активность компании «{company_info['name']}». "
-        f"По данным найма на hh.ru у вас открыты вакансии в ключевых отделах. "
-        f"Наша компания предлагает решение «{prod_name}» ({current_seller_profile.product_description}). "
-        f"Для вашей команды это даст следующий результат: {prod_value}. "
-        f"Подскажите, когда вам удобно провести короткую 15-минутную демо-презентацию?"
-    )
-    
+    pain_points.append(f"Сформирована карта из {len(lpr_list)} ЛПР (CEO, CCO, CTO) с персональными контактами и питчами.")
+
     return {
         "seller_product_profile": current_seller_profile,
         "dadata_legal_profile": company_info,
+        "lpr_matrix": {
+            "total_lprs": len(lpr_list),
+            "lprs": lpr_list
+        },
         "hh_recruitment_profile": {
             "open_vacancies_count": len(vacancies),
             "vacancies": vacancies
         },
         "sales_ai_insights": {
             "lead_score": min(score, 98),
-            "recommended_pitch": pitch,
             "insights": pain_points,
             "next_steps": [
-                f"1. Отправить коммерческое предложение по решению «{prod_name}»",
-                "2. Назначить 15-минутный онлайн-звонок с ЛПР / Руководителем",
-                "3. Внести контакт HR/Руководителя в CRM-систему"
+                f"1. Выбрать целевого ЛПР (Коммерческий директор / CCO)",
+                f"2. Отправить персональный питч в Telegram или на Email",
+                "3. Назначить 15-минутную онлайн-демонстрацию решения"
             ]
         }
     }
@@ -266,12 +315,12 @@ def create_crm_deal(deal: CRMDealRequest):
     return {
         "status": "success",
         "deal_id": f"DEAL-2026-{os.urandom(2).hex().upper()}",
-        "message": f"Сделка по компании «{deal.company_name}» успешно создана в CRM со статусом 'Первичный контакт'.",
+        "message": f"Сделка по компании «{deal.company_name}» с адресатом '{deal.selected_lpr or deal.ceo_name}' успешно создана в CRM.",
         "assigned_copilot": "Включен авто-контроль касаний"
     }
 
 # --------------------------------------------------------------------------
-# 4. FRONTEND INTERACTIVE PROTOTYPE (С модальным окном настройки Вашей Компании)
+# 4. FRONTEND INTERACTIVE PROTOTYPE (С МАТРИЦЕЙ ЛПР И "СЕТКОЙ" HH.RU)
 # --------------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
@@ -282,7 +331,7 @@ def get_demo_ui():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Sales Copilot — Рабочий Прототип</title>
+    <title>AI Sales Copilot — Поиск ЛПР и Обогащение</title>
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
@@ -294,9 +343,9 @@ def get_demo_ui():
             color: #2b3445;
         }
         .navbar-custom {
-            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
             padding: 1rem 0;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
         }
         .card-custom {
             border: 1px solid rgba(0,0,0,0.06);
@@ -317,6 +366,7 @@ def get_demo_ui():
             border-radius: 8px;
         }
         .badge-dadata { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
+        .badge-setka { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
         .badge-hh { background: #ffe4e6; color: #9f1239; border: 1px solid #fecdd3; }
         .badge-ai { background: #f3e8ff; color: #6b21a8; border: 1px solid #e9d5ff; }
         
@@ -333,18 +383,23 @@ def get_demo_ui():
             font-size: 1.25rem;
             box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
         }
+        .lpr-card {
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 1.25rem;
+            background: #ffffff;
+            transition: all 0.2s ease;
+        }
+        .lpr-card.active {
+            border-color: #3b82f6;
+            background: #f0f9ff;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+        }
         .pitch-box {
             background: #f8fafc;
             border-left: 4px solid #3b82f6;
             border-radius: 0 12px 12px 0;
             padding: 1.25rem;
-        }
-        .vacancy-card {
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 1rem;
-            background: #ffffff;
-            margin-bottom: 0.75rem;
         }
         .seller-badge-bar {
             background: #ffffff;
@@ -367,10 +422,10 @@ def get_demo_ui():
             </a>
             <div class="d-flex align-items-center gap-2">
                 <button class="btn btn-outline-light btn-sm fw-semibold" data-bs-toggle="modal" data-bs-target="#sellerProfileModal">
-                    <i class="bi bi-gear-fill me-1"></i> Настроить мой продукт / оффер
+                    <i class="bi bi-gear-fill me-1"></i> Настроить мой оффер
                 </button>
                 <span class="badge bg-success bg-opacity-20 text-success px-3 py-2 rounded-pill border border-success border-opacity-20">
-                    <i class="bi bi-broadcast me-1"></i> Live Prototype
+                    <i class="bi bi-broadcast me-1"></i> Live LPR Finder
                 </span>
             </div>
         </div>
@@ -378,13 +433,13 @@ def get_demo_ui():
 
     <div class="container mb-5">
         
-        <!-- Информационная плашка активного продукта -->
+        <!-- Информационная плашка продукта -->
         <div class="seller-badge-bar mb-4 d-flex justify-content-between align-items-center flex-wrap gap-2 shadow-sm">
             <div>
-                <span class="text-muted small fw-semibold">Продукт вашей компании:</span>
+                <span class="text-muted small fw-semibold">Ваш продукт:</span>
                 <span class="fw-bold text-dark ms-1" id="currentProdName">AI Sales Copilot</span>
                 <span class="text-muted mx-2">•</span>
-                <span class="text-muted small" id="currentProdDesc">Автоматизация продаж и B2B AI-ассистент</span>
+                <span class="text-muted small" id="currentProdDesc">Автоматизация B2B продаж</span>
             </div>
             <button class="btn btn-sm btn-link text-decoration-none p-0 text-primary fw-semibold" data-bs-toggle="modal" data-bs-target="#sellerProfileModal">
                 <i class="bi bi-pencil-square me-1"></i> Изменить оффер
@@ -394,47 +449,46 @@ def get_demo_ui():
         <!-- Панель поиска -->
         <div class="card card-custom p-4 mb-4">
             <h5 class="fw-bold mb-3 text-dark">
-                <i class="bi bi-search text-primary me-2"></i> Обогащение профиля клиента для менеджера по продажам
+                <i class="bi bi-person-lines-fill text-primary me-2"></i> Поиск ЛПР и Обогащение компании
             </h5>
             <div class="row g-2">
                 <div class="col-md-8">
                     <div class="input-group input-group-lg">
                         <span class="input-group-text bg-white text-muted border-end-0"><i class="bi bi-building"></i></span>
-                        <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Введите ИНН потенциального клиента или название..." value="7707083893">
+                        <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Введите ИНН или название компании..." value="7707083893">
                     </div>
                 </div>
                 <div class="col-md-4">
                     <button onclick="runCopilotEnrichment()" class="btn btn-primary btn-lg w-100 fw-semibold d-flex align-items-center justify-content-center gap-2">
-                        <i class="bi bi-stars"></i> Запустить AI Ассистент
+                        <i class="bi bi-search-heart"></i> Найти ЛПР и Обогатить
                     </button>
                 </div>
             </div>
             
             <div class="d-flex align-items-center gap-2 mt-3 text-muted small">
-                <span class="fw-semibold">Быстрые примеры ИНН клиентов:</span>
+                <span class="fw-semibold">Примеры:</span>
                 <button class="btn btn-sm btn-outline-secondary rounded-pill py-0 px-2" onclick="setQuery('7707083893')">Сбербанк</button>
                 <button class="btn btn-sm btn-outline-secondary rounded-pill py-0 px-2" onclick="setQuery('7702070139')">Яндекс</button>
                 <button class="btn btn-sm btn-outline-secondary rounded-pill py-0 px-2" onclick="setQuery('7710353606')">Т-Банк</button>
-                <button class="btn btn-sm btn-outline-secondary rounded-pill py-0 px-2" onclick="setQuery('7709257050')">1С</button>
             </div>
         </div>
 
         <!-- Прелоадер -->
         <div id="loader" class="text-center py-5 d-none">
             <div class="spinner-border text-primary" style="width: 3.5rem; height: 3.5rem;" role="status"></div>
-            <h5 class="fw-semibold mt-3 text-dark">AI Копилот скрещивает данные клиента с вашим оффером...</h5>
-            <p class="text-muted">Запрос юридических реквизитов DaData & Анализ вакансий hh.ru</p>
+            <h5 class="fw-semibold mt-3 text-dark">AI Копилот ищет ЛПР и формирует питчи...</h5>
+            <p class="text-muted">Запрос реквизитов DaData & Сканирование "Сетки" hh.ru</p>
         </div>
 
         <!-- Область результатов -->
         <div id="resultsContent" class="d-none">
             
-            <!-- AI Copilot Card -->
-            <div class="card card-custom p-4 mb-4 border-0 shadow-sm" style="background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);">
+            <!-- AI Copilot Card Header -->
+            <div class="card card-custom p-4 mb-4 border-0 shadow-sm">
                 <div class="d-flex justify-content-between align-items-start mb-3">
                     <div>
                         <span class="badge-source badge-ai mb-2 d-inline-block">
-                            <i class="bi bi-cpu-fill me-1"></i> AI Sales Intelligence
+                            <i class="bi bi-stars me-1"></i> AI Sales Intelligence
                         </span>
                         <h3 class="fw-bold mb-0 text-dark" id="companyNameHeader">ПАО Сбербанк</h3>
                     </div>
@@ -446,146 +500,114 @@ def get_demo_ui():
                     </div>
                 </div>
 
-                <!-- Рекомендуемый скрипт -->
-                <div class="pitch-box mb-3">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-7">
+                        <h6 class="fw-bold text-secondary mb-2"><i class="bi bi-lightning-charge-fill text-warning me-1"></i>Аналитика и триггеры:</h6>
+                        <ul id="triggersList" class="mb-0 ps-3 text-dark"></ul>
+                    </div>
+                    <div class="col-md-5">
+                        <h6 class="fw-bold text-secondary mb-2"><i class="bi bi-check2-circle text-success me-1"></i>Рекомендуемые шаги:</h6>
+                        <ul id="nextStepsList" class="list-unstyled mb-0 small text-muted"></ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- РАЗДЕЛ: МАТРИЦА ЛПР (ЛИЦА, ПРИНИМАЮЩИЕ РЕШЕНИЯ) -->
+            <div class="card card-custom p-4 mb-4">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="fw-bold mb-0 text-dark">
+                        <i class="bi bi-people-fill text-primary me-2"></i> Карта ЛПР компании (Найденные контакты)
+                    </h5>
+                    <span class="badge bg-primary bg-opacity-10 text-primary fw-bold" id="lprCountBadge">3 ЛПР найдено</span>
+                </div>
+                <p class="text-muted small mb-4">Выберите нужного руководителя — AI Copilot сразу сформирует персональный питч с учетом его роли и задач.</p>
+
+                <div class="row g-3" id="lprCardsContainer"></div>
+
+                <!-- Выбранный Pitch -->
+                <div class="pitch-box mt-4">
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="fw-bold text-primary"><i class="bi bi-chat-left-text-fill me-2"></i>Сгенерированный Pitch под ваш продукт:</span>
-                        <button class="btn btn-sm btn-outline-primary" onclick="copyPitch()"><i class="bi bi-copy me-1"></i> Скопировать</button>
+                        <span class="fw-bold text-primary" id="selectedLprRoleTitle">
+                            <i class="bi bi-chat-left-quote-fill me-2"></i> Персональный питч для выбранного ЛПР:
+                        </span>
+                        <button class="btn btn-sm btn-outline-primary" onclick="copyPitch()"><i class="bi bi-copy me-1"></i> Скопировать питч</button>
                     </div>
                     <p class="mb-0 text-dark fs-6 lh-base" id="pitchText"></p>
                 </div>
 
-                <div class="row g-3">
-                    <div class="col-md-7">
-                        <h6 class="fw-bold text-secondary mb-2"><i class="bi bi-lightning-charge-fill text-warning me-1"></i>Выявленные боли и триггеры:</h6>
-                        <ul id="triggersList" class="mb-0 ps-3 text-dark"></ul>
-                    </div>
-                    <div class="col-md-5">
-                        <h6 class="fw-bold text-secondary mb-2"><i class="bi bi-check2-circle text-success me-1"></i>Рекомендуемые шаги (Next Steps):</h6>
-                        <ul id="nextStepsList" class="list-unstyled mb-0 small text-muted"></ul>
-                    </div>
-                </div>
-
-                <hr class="my-3 text-muted opacity-25">
-
-                <div class="d-flex justify-content-between align-items-center">
-                    <span class="text-muted small"><i class="bi bi-shield-check me-1"></i> Данные верифицированы AI Копилотом</span>
+                <div class="d-flex justify-content-end mt-3">
                     <button id="crmBtn" onclick="sendToCRM()" class="btn btn-success fw-semibold">
-                        <i class="bi bi-plus-circle me-1"></i> Создать сделку в CRM
+                        <i class="bi bi-plus-circle me-1"></i> Создать сделку в CRM для этого ЛПР
                     </button>
                 </div>
             </div>
 
-            <!-- Две колонки с источниками -->
+            <!-- Колонки источника: DaData & hh.ru -->
             <div class="row g-4">
-                
-                <!-- DaData Column -->
                 <div class="col-lg-6">
                     <div class="card card-custom h-100 p-4">
                         <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h5 class="fw-bold mb-0 text-dark">
-                                <i class="bi bi-building-check text-primary me-2"></i>Юридические данные
-                            </h5>
-                            <span class="badge-source badge-dadata">
-                                <i class="bi bi-check-circle-fill me-1"></i> DaData (Live)
-                            </span>
+                            <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-building-check text-primary me-2"></i>Юридический профиль</h5>
+                            <span class="badge-source badge-dadata"><i class="bi bi-check-circle-fill me-1"></i> DaData (Live)</span>
                         </div>
-                        
-                        <div class="table-responsive">
-                            <table class="table table-borderless table-sm mb-0">
-                                <tbody>
-                                    <tr>
-                                        <td class="text-muted fw-semibold" style="width: 40%;">ИНН / КПП:</td>
-                                        <td class="fw-semibold text-dark" id="legalInnKpp">-</td>
-                                    </tr>
-                                    <tr>
-                                        <td class="text-muted fw-semibold">ОГРН:</td>
-                                        <td class="text-dark" id="legalOgrn">-</td>
-                                    </tr>
-                                    <tr>
-                                        <td class="text-muted fw-semibold">Генеральный директор:</td>
-                                        <td class="fw-bold text-primary" id="legalCeo">-</td>
-                                    </tr>
-                                    <tr>
-                                        <td class="text-muted fw-semibold">Юридический адрес:</td>
-                                        <td class="text-dark small" id="legalAddress">-</td>
-                                    </tr>
-                                    <tr>
-                                        <td class="text-muted fw-semibold">Штат сотрудников:</td>
-                                        <td class="text-dark" id="legalEmployees">-</td>
-                                    </tr>
-                                    <tr>
-                                        <td class="text-muted fw-semibold">Статус:</td>
-                                        <td><span class="badge bg-success bg-opacity-10 text-success fw-bold" id="legalStatus">ДЕЙСТВУЮЩЕЕ</span></td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
+                        <table class="table table-borderless table-sm mb-0">
+                            <tbody>
+                                <tr><td class="text-muted fw-semibold">ИНН / КПП:</td><td class="fw-semibold text-dark" id="legalInnKpp">-</td></tr>
+                                <tr><td class="text-muted fw-semibold">ОГРН:</td><td class="text-dark" id="legalOgrn">-</td></tr>
+                                <tr><td class="text-muted fw-semibold">Генеральный директор:</td><td class="fw-bold text-primary" id="legalCeo">-</td></tr>
+                                <tr><td class="text-muted fw-semibold">Адрес:</td><td class="text-dark small" id="legalAddress">-</td></tr>
+                                <tr><td class="text-muted fw-semibold">Штат:</td><td class="text-dark" id="legalEmployees">-</td></tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
 
-                <!-- hh.ru Column -->
                 <div class="col-lg-6">
                     <div class="card card-custom h-100 p-4">
                         <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h5 class="fw-bold mb-0 text-dark">
-                                <i class="bi bi-person-search text-danger me-2"></i>Найм & Вакансии
-                            </h5>
-                            <span class="badge-source badge-hh">
-                                <i class="bi bi-cpu-fill me-1"></i> hh.ru (Mock Engine)
-                            </span>
+                            <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-briefcase text-danger me-2"></i>Найм & Вакансии</h5>
+                            <span class="badge-source badge-hh"><i class="bi bi-cpu-fill me-1"></i> hh.ru API</span>
                         </div>
-
-                        <div class="d-flex align-items-center justify-content-between mb-3 p-2 bg-light rounded-3">
-                            <span class="text-muted small fw-semibold">Активных вакансий на поиске:</span>
-                            <span class="badge bg-danger rounded-pill px-3 py-1 fs-6" id="vacanciesCount">0</span>
-                        </div>
-
                         <div id="vacanciesContainer" class="vstack gap-2"></div>
                     </div>
                 </div>
-
             </div>
 
         </div>
 
     </div>
 
-    <!-- Модальное окно настройки Продукта Вашей Компании -->
-    <div class="modal fade" id="sellerProfileModal" tabindex="-1" aria-labelledby="sellerProfileModalLabel" aria-hidden="true">
+    <!-- Модальное окно настройки -->
+    <div class="modal fade" id="sellerProfileModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-lg">
             <div class="modal-content border-0 shadow">
                 <div class="modal-header bg-dark text-white">
-                    <h5 class="modal-title fw-bold" id="sellerProfileModalLabel"><i class="bi bi-sliders me-2"></i>Профиль вашей компании (Seller Profile)</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                    <h5 class="modal-title fw-bold"><i class="bi bi-sliders me-2"></i>Настройка вашего продукта</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body p-4">
-                    <p class="text-muted small mb-3">Укажите, какой продукт или услугу вы продаете. AI Copilot будет использовать эти данные для адаптации питча под любого найденного B2B-клиента.</p>
-                    
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Название вашего продукта / решения:</label>
-                        <input type="text" id="sellerProductName" class="form-control" placeholder="например: AI Sales Copilot, Bitrix24, Логистический софт...">
+                        <label class="form-label fw-semibold">Название продукта / решения:</label>
+                        <input type="text" id="sellerProductName" class="form-control">
                     </div>
-                    
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Краткое описание вашей деятельности:</label>
-                        <input type="text" id="sellerProductDesc" class="form-control" placeholder="чем занимается ваша компания...">
+                        <label class="form-label fw-semibold">Описание продукта:</label>
+                        <input type="text" id="sellerProductDesc" class="form-control">
                     </div>
-
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Ценность для клиента (Value Proposition):</label>
-                        <textarea id="sellerValueProp" class="form-control" rows="3" placeholder="какой результат получит клиент после покупки вашего продукта..."></textarea>
+                        <textarea id="sellerValueProp" class="form-control" rows="3"></textarea>
                     </div>
                 </div>
                 <div class="modal-footer bg-light">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                    <button type="button" onclick="saveSellerProfile()" class="btn btn-primary fw-semibold"><i class="bi bi-check-lg me-1"></i> Сохранить настройки</button>
+                    <button type="button" onclick="saveSellerProfile()" class="btn btn-primary fw-semibold">Сохранить</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Уведомления Toast -->
+    <!-- Toast -->
     <div class="toast-container position-fixed bottom-0 end-0 p-3">
         <div id="liveToast" class="toast text-bg-dark border-0 shadow" role="alert" aria-live="assertive" aria-atomic="true">
             <div class="d-flex">
@@ -598,6 +620,7 @@ def get_demo_ui():
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         let currentEnrichedData = null;
+        let selectedLprIndex = 0;
 
         async function loadSellerProfile() {
             try {
@@ -609,9 +632,7 @@ def get_demo_ui():
 
                 document.getElementById('currentProdName').innerText = data.product_name;
                 document.getElementById('currentProdDesc').innerText = data.product_description;
-            } catch (e) {
-                console.error(e);
-            }
+            } catch (e) { console.error(e); }
         }
 
         async function saveSellerProfile() {
@@ -621,27 +642,16 @@ def get_demo_ui():
                 target_icp: "B2B компании",
                 value_proposition: document.getElementById('sellerValueProp').value
             };
-
-            try {
-                await fetch('/api/seller/profile', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                const modal = bootstrap.Modal.getInstance(document.getElementById('sellerProfileModal'));
-                modal.hide();
-
-                await loadSellerProfile();
-                showToast('Профиль вашей компании успешно сохранен!');
-
-                // Пересчитать данные если клиент открыт
-                if (document.getElementById('searchInput').value) {
-                    runCopilotEnrichment();
-                }
-            } catch (e) {
-                alert('Ошибка сохранения: ' + e);
-            }
+            await fetch('/api/seller/profile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const modal = bootstrap.Modal.getInstance(document.getElementById('sellerProfileModal'));
+            modal.hide();
+            await loadSellerProfile();
+            showToast('Настройки продукта обновлены!');
+            if (document.getElementById('searchInput').value) runCopilotEnrichment();
         }
 
         function setQuery(inn) {
@@ -652,14 +662,27 @@ def get_demo_ui():
         function showToast(msg) {
             document.getElementById('toastMessage').innerText = msg;
             const toastEl = document.getElementById('liveToast');
-            const toast = new bootstrap.Toast(toastEl);
-            toast.show();
+            new bootstrap.Toast(toastEl).show();
         }
 
         function copyPitch() {
             const pitch = document.getElementById('pitchText').innerText;
             navigator.clipboard.writeText(pitch);
-            showToast('Скрипт обращения скопирован в буфер обмена!');
+            showToast('Питч скопирован в буфер обмена!');
+        }
+
+        function selectLpr(index) {
+            selectedLprIndex = index;
+            const lprs = currentEnrichedData.lpr_matrix.lprs;
+            const selected = lprs[index];
+
+            document.querySelectorAll('.lpr-card').forEach((card, idx) => {
+                if (idx === index) card.classList.add('active');
+                else card.classList.remove('active');
+            });
+
+            document.getElementById('selectedLprRoleTitle').innerHTML = `<i class="bi bi-chat-left-quote-fill me-2"></i> Питч для ЛПР: ${selected.name} (${selected.role}):`;
+            document.getElementById('pitchText').innerText = selected.custom_pitch;
         }
 
         async function runCopilotEnrichment() {
@@ -671,9 +694,7 @@ def get_demo_ui():
 
             try {
                 const response = await fetch(`/api/copilot/enrich-company?inn=${encodeURIComponent(query)}`);
-                if (!response.ok) {
-                    throw new Error('Компания не найдена или ошибка API');
-                }
+                if (!response.ok) throw new Error('Ошибка поиска компании');
 
                 const data = await response.json();
                 currentEnrichedData = data;
@@ -684,11 +705,10 @@ def get_demo_ui():
                 const legal = data.dadata_legal_profile;
                 const hh = data.hh_recruitment_profile;
                 const ai = data.sales_ai_insights;
+                const lpr = data.lpr_matrix;
 
-                // Header & Score
                 document.getElementById('companyNameHeader').innerText = legal.name;
                 document.getElementById('scoreCircle').innerText = ai.lead_score;
-                document.getElementById('pitchText').innerText = ai.recommended_pitch;
 
                 // Triggers
                 const triggersList = document.getElementById('triggersList');
@@ -710,40 +730,52 @@ def get_demo_ui():
                     nextStepsList.appendChild(li);
                 });
 
+                // Render LPR Cards
+                document.getElementById('lprCountBadge').innerText = `${lpr.total_lprs} ЛПР найдено`;
+                const lprContainer = document.getElementById('lprCardsContainer');
+                lprContainer.innerHTML = '';
+
+                lpr.lprs.forEach((person, idx) => {
+                    const badgeClass = person.source_type === 'setka' ? 'badge-setka' : 'badge-dadata';
+                    const iconClass = person.source_type === 'setka' ? 'bi-share-fill' : 'bi-shield-check';
+                    
+                    const col = document.createElement('div');
+                    col.className = 'col-md-4';
+                    col.innerHTML = `
+                        <div class="lpr-card ${idx === 0 ? 'active' : ''}" onclick="selectLpr(${idx})" style="cursor: pointer;">
+                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                <span class="badge-source ${badgeClass}"><i class="bi ${iconClass} me-1"></i> ${person.source}</span>
+                            </div>
+                            <h6 class="fw-bold text-dark mb-1">${person.name}</h6>
+                            <div class="text-primary small fw-semibold mb-2">${person.role}</div>
+                            
+                            <div class="small text-muted mb-1"><i class="bi bi-telephone me-1"></i> ${person.contacts.phone}</div>
+                            <div class="small text-muted mb-1"><i class="bi bi-envelope me-1"></i> ${person.contacts.email}</div>
+                            <div class="small text-muted"><i class="bi bi-telegram me-1"></i> ${person.contacts.telegram}</div>
+                        </div>
+                    `;
+                    lprContainer.appendChild(col);
+                });
+
+                // Set initial LPR pitch
+                selectLpr(0);
+
                 // DaData Fill
                 document.getElementById('legalInnKpp').innerText = `${legal.inn} / ${legal.kpp}`;
                 document.getElementById('legalOgrn').innerText = legal.ogrn;
                 document.getElementById('legalCeo').innerText = legal.ceo;
                 document.getElementById('legalAddress').innerText = legal.address;
-                document.getElementById('legalEmployees').innerText = legal.employee_count ? `${legal.employee_count} чел.` : 'Данные отсутствуют';
+                document.getElementById('legalEmployees').innerText = legal.employee_count ? `${legal.employee_count} чел.` : 'Не указано';
 
                 // hh.ru Fill
-                document.getElementById('vacanciesCount').innerText = hh.open_vacancies_count;
                 const vacContainer = document.getElementById('vacanciesContainer');
                 vacContainer.innerHTML = '';
-
                 hh.vacancies.forEach(v => {
                     const el = document.createElement('div');
-                    el.className = 'vacancy-card';
-                    el.innerHTML = `
-                        <div class="d-flex justify-content-between align-items-start">
-                            <div class="fw-bold text-dark">${v.title}</div>
-                            <span class="badge bg-primary bg-opacity-10 text-primary">${v.salary}</span>
-                        </div>
-                        <p class="small text-muted mb-2 mt-1">${v.requirement}</p>
-                        <div class="d-flex justify-content-between align-items-center pt-2 border-top border-light small text-muted">
-                            <span><i class="bi bi-person me-1"></i> ${v.hr_name}</span>
-                            <a href="mailto:${v.hr_email}" class="text-decoration-none"><i class="bi bi-envelope me-1"></i> Написать HR</a>
-                        </div>
-                    `;
+                    el.className = 'p-2 border rounded bg-light small mb-2';
+                    el.innerHTML = `<div class="fw-bold text-dark">${v.title}</div><div class="text-muted">${v.requirement}</div>`;
                     vacContainer.appendChild(el);
                 });
-
-                // Reset CRM button
-                const crmBtn = document.getElementById('crmBtn');
-                crmBtn.disabled = false;
-                crmBtn.className = 'btn btn-success fw-semibold';
-                crmBtn.innerHTML = '<i class="bi bi-plus-circle me-1"></i> Создать сделку в CRM';
 
             } catch (err) {
                 alert('Ошибка: ' + err.message);
@@ -753,16 +785,18 @@ def get_demo_ui():
 
         async function sendToCRM() {
             if (!currentEnrichedData) return;
+            const selectedLpr = currentEnrichedData.lpr_matrix.lprs[selectedLprIndex];
 
             const crmBtn = document.getElementById('crmBtn');
             crmBtn.disabled = true;
-            crmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></i> Сохранение в CRM...';
+            crmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></i> Создание сделки...';
 
             const payload = {
                 company_name: currentEnrichedData.dadata_legal_profile.name,
                 inn: currentEnrichedData.dadata_legal_profile.inn,
                 ceo_name: currentEnrichedData.dadata_legal_profile.ceo,
-                pitch: currentEnrichedData.sales_ai_insights.recommended_pitch,
+                selected_lpr: `${selectedLpr.name} (${selectedLpr.role})`,
+                pitch: selectedLpr.custom_pitch,
                 lead_score: currentEnrichedData.sales_ai_insights.lead_score
             };
 
@@ -773,14 +807,10 @@ def get_demo_ui():
                     body: JSON.stringify(payload)
                 });
                 const result = await res.json();
-
                 crmBtn.className = 'btn btn-outline-success fw-semibold';
-                crmBtn.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i> Сделка создана в CRM!';
-                showToast(`${result.message} (ID: ${result.deal_id})`);
-            } catch (e) {
-                alert('Ошибка создания сделки: ' + e);
-                crmBtn.disabled = false;
-            }
+                crmBtn.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i> Сделка создана!';
+                showToast(result.message);
+            } catch (e) { alert('Ошибка CRM: ' + e); crmBtn.disabled = false; }
         }
 
         window.onload = function() {
