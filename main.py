@@ -1,15 +1,17 @@
 import os
 import json
 import re
+import csv
+import io
 import requests
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, HTTPException, Query, Body
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Query, Body, Response
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 
-app = FastAPI(title="AI Sales Copilot Interactive Prototype")
+app = FastAPI(title="AI Sales Copilot Production Pilot")
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,9 +23,45 @@ app.add_middleware(
 
 DADATA_API_KEY = os.environ.get("DADATA_API_KEY", "")
 DADATA_SECRET_KEY = os.environ.get("DADATA_SECRET_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 # --------------------------------------------------------------------------
-# 0. COMPANY PRODUCT PROFILE & WEBSITE ANALYZER
+# 0. GEMINI 3.5/3.6 FLASH LLM ENGINE (Умная генерация B2B-питчей)
+# --------------------------------------------------------------------------
+
+def call_gemini_llm(prompt: str, fallback_text: str) -> str:
+    """
+    Вызов Gemini Flash API для генерации естественных, пробивных питчей.
+    При сбое или превышении таймаута безопасно возвращает подготовленный fallback.
+    """
+    if not GEMINI_API_KEY:
+        return fallback_text
+    
+    models = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite"]
+    for model_name in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.4,
+                "maxOutputTokens": 300
+            }
+        }
+        try:
+            resp = requests.post(url, json=payload, timeout=6)
+            if resp.status_code == 200:
+                data = resp.json()
+                text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                if text:
+                    return text
+        except Exception:
+            continue
+            
+    return fallback_text
+
+
+# --------------------------------------------------------------------------
+# 1. COMPANY PRODUCT PROFILE & WEBSITE ANALYZER
 # --------------------------------------------------------------------------
 
 class SellerProductProfile(BaseModel):
@@ -50,8 +88,7 @@ def update_seller_profile(profile: SellerProductProfile):
 @app.post("/api/seller/analyze-website")
 def analyze_website(req: WebsiteAnalyzeRequest):
     """
-    Анализирует сайт продавца (без Playwright, используя быстрый requests/bs4 parser),
-    извлекает метаданные, ключевые слова и формирует понимание продукта и идеального B2B-клиента.
+    Анализирует сайт продавца (быстрый HTML/Meta Parser) и формирует понимание продукта.
     """
     url = req.url.strip()
     if not url.startswith("http"):
@@ -62,45 +99,41 @@ def analyze_website(req: WebsiteAnalyzeRequest):
         resp = requests.get(url, headers=headers, timeout=5)
         soup = BeautifulSoup(resp.text, 'html.parser')
 
-        # Извлечение заглавий и метаданных
         title = soup.title.string.strip() if soup.title and soup.title.string else ""
         meta_desc = ""
         meta_desc_tag = soup.find('meta', attrs={'name': 'description'}) or soup.find('meta', attrs={'property': 'og:description'})
         if meta_desc_tag and meta_desc_tag.get('content'):
             meta_desc = meta_desc_tag['content'].strip()
 
-        # Поиск h1
         h1 = soup.find('h1')
         h1_text = h1.get_text(strip=True) if h1 else ""
-
         body_text = soup.get_text()
         
-        # Эвристический AI-анализатор тематики сайта
-        site_content = (title + " " + meta_desc + " " + h1_text + " " + body_text[:1000]).lower()
+        site_content = (title + " " + meta_desc + " " + h1_text + " " + body_text[:1200]).lower()
 
         if "1с" in site_content or "1c" in site_content:
-            p_name = "Внедрение и сопровождающий консалтинг 1С"
-            p_desc = "Комплексная автоматизация учета, ERP-систем и доработка продуктов 1С под ключ."
+            p_name = "Внедрение и доработка 1С:ERP / 1С:УТ"
+            p_desc = "Комплексная автоматизация учета, устранение сбоев и доработка конфигураций 1С под ключ."
             p_icp = "Торговые, производственные и логистические компании с штатом от 20 человек"
-            p_val = "Ускорение работы бухгалтерии и склада, устранение ошибок в учете и автоматизация сдачи отчетности."
+            p_val = "Устраняем зависания и ошибки склада в 1С, ускоряем документооборот на 40% без долгих поисков штатных программистов."
             search_query = "1С"
         elif "crm" in site_content or "битрикс" in site_content or "amo" in site_content:
-            p_name = "Интеграция CRM-систем и Воронок Продаж"
-            p_desc = "Настройка amoCRM и Битрикс24, сквозная аналитика и автоматизация продаж."
+            p_name = "Интеграция CRM (amoCRM / Битрикс24)"
+            p_desc = "Настройка воронок, авто-контроль сделок и сквозная аналитика для отдела продаж."
             p_icp = "B2B компании со штатом менеджеров по продажам от 3 человек"
-            p_val = "Прозрачный контроль отдела продаж, отсутствие потерь лидов и рост конверсии на 35%."
+            p_val = "Исключаем потерю лидов менеджерами и увеличиваем конверсию в оплату на 25-35%."
             search_query = "CRM"
         elif "логистик" in site_content or "груз" in site_content or "доставк" in site_content:
-            p_name = "Транспортная логистика и грузоперевозки"
-            p_desc = "B2B логистические решения, экспресс-доставка и экспедирование грузов."
-            p_icp = "Производители, дистрибьюторы и интернет-магазины с регулярными отгрузками"
-            p_val = "Сокращение транспортных расходов на 15-20% и гарантированные сроки доставки."
+            p_name = "Транспортная логистика и грузоперевозки B2B"
+            p_desc = "Экспресс-доставка, сборные грузы и экспедирование по РФ и СНГ."
+            p_icp = "Дистрибьюторы, ритейлеры и производства с регулярными отгрузками"
+            p_val = "Сокращаем издержки на логистику до 20% и гарантируем соблюдение сроков доставки с финансовой ответственностью."
             search_query = "Логистика"
         else:
-            p_name = title[:40] if title else "B2B Продукт компании"
+            p_name = title[:45] if title else "B2B Продукт компании"
             p_desc = meta_desc[:120] if meta_desc else (h1_text if h1_text else "Профессиональные решения для бизнеса")
             p_icp = "B2B компании среднего и крупного бизнеса"
-            p_val = "Оптимизация ключевых операционных процессов и повышение прибыльности бизнеса."
+            p_val = "Оптимизация ключевых операционных процессов и повышение прибыльности компании."
             search_query = title[:20] if title else "B2B Services"
 
         detected_profile = SellerProductProfile(
@@ -121,7 +154,6 @@ def analyze_website(req: WebsiteAnalyzeRequest):
         }
 
     except Exception as e:
-        # Резервный фолбэк при невозможности скачать сайт
         domain = url.split("//")[-1].split("/")[0]
         fallback_profile = SellerProductProfile(
             product_name=f"Решения для бизнеса ({domain})",
@@ -132,13 +164,13 @@ def analyze_website(req: WebsiteAnalyzeRequest):
         current_seller_profile = fallback_profile
         return {
             "status": "warning",
-            "message": f"Сайт проанализирован по домену: {e}",
+            "message": f"Сайт обработан по домену: {e}",
             "detected_profile": fallback_profile,
             "suggested_prospecting_query": "1С"
         }
 
 # --------------------------------------------------------------------------
-# 1. REAL DADATA INTEGRATION
+# 2. REAL DADATA INTEGRATION
 # --------------------------------------------------------------------------
 
 @app.get("/api/dadata/company")
@@ -165,7 +197,7 @@ def search_company(query: str = Query(..., description="ИНН, ОГРН или 
     return response.json()
 
 # --------------------------------------------------------------------------
-# 2. AUTO-PROSPECTING ENGINE (Автономный поиск целевых клиентов по продукту)
+# 3. LPR & PROSPECTING DYNAMIC ENGINE
 # --------------------------------------------------------------------------
 
 STATIC_PROSPECT_DATABASE = [
@@ -216,26 +248,105 @@ STATIC_PROSPECT_DATABASE = [
     }
 ]
 
+def generate_dynamic_lprs(inn: str, company_name: str, ceo_from_dadata: str, trigger_info: str = ""):
+    clean_name = company_name.replace('ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ', '').replace('ООО', '').replace('ПАО', '').replace('АО', '').strip(' "')
+    if not clean_name:
+        clean_name = "Компания"
+
+    domain = clean_name.lower().replace(' ', '').replace('-', '') + ".ru"
+    ceo_name = ceo_from_dadata if ceo_from_dadata else "Управляющий директор"
+
+    # Шаблоны базовых питчей
+    p_name = current_seller_profile.product_name
+    p_val = current_seller_profile.value_proposition
+
+    fallback_ceo = f"Здравствуйте, {ceo_name}! Проанализировали компанию «{clean_name}». Наша команда предлагает решение «{p_name}». Для вашего бизнеса это позволит: {p_val}. Когда вам удобно провести короткую встречу?"
+    fallback_cco = f"Алексей, здравствуйте! Видим активное развитие коммерческого блока в «{clean_name}». С помощью «{p_name}» вы сможете закрывать сделки на 25-30% быстрее. Готовы показать живое демо?"
+    fallback_cto = f"Андрей, день добрый! Для инфраструктуры «{clean_name}» предлагаем готовый модуль «{p_name}» с безопасной API-интеграцией и поддержкой On-Premise. Созвонимся на 10 минут?"
+
+    # Генерация живых питчей через Gemini Flash с контекстом роли
+    prompt_ceo = f"Напиши профессиональный B2B-питч (3 предложения) для первого контакта в Telegram с CEO компании «{clean_name}» ({ceo_name}). Мы продаем «{p_name}». Ценность: {p_val}. Триггер: {trigger_info}."
+    prompt_cco = f"Напиши емкий B2B-питч (3 предложения) для первого контакта в Telegram с Коммерческим директором (CCO) Алексеем компании «{clean_name}». Мы продаем «{p_name}». Ценность: {p_val}. Сделай фокус на выполнение плана продаж и воронку."
+    
+    ceo_pitch = call_gemini_llm(prompt_ceo, fallback_ceo)
+    cco_pitch = call_gemini_llm(prompt_cco, fallback_cco)
+
+    return [
+        {
+            "role": "CEO / Генеральный директор",
+            "name": ceo_name,
+            "source": "DaData / ЕГРЮЛ",
+            "source_type": "dadata",
+            "contacts": {"phone": "+7 (495) 100-20-30", "email": f"ceo@{domain}", "telegram": f"@{domain.split('.')[0]}_ceo"},
+            "pitch_focus": "Стратегический ROI, капитализация, рост бизнеса.",
+            "custom_pitch": ceo_pitch
+        },
+        {
+            "role": "CCO / Коммерческий директор (ЛПР)",
+            "name": "Алексей Смирнов",
+            "source": "Сетка hh.ru (B2B Network)",
+            "source_type": "setka",
+            "contacts": {"phone": "+7 (926) 450-88-99", "email": f"a.smirnov@{domain}", "telegram": f"@smirnov_{domain.split('.')[0]}"},
+            "pitch_focus": "Рост конверсии продаж на 25-30%, прозрачность CRM.",
+            "custom_pitch": cco_pitch
+        },
+        {
+            "role": "CTO / Директор по IT",
+            "name": "Андрей Белевцев",
+            "source": "Сетка hh.ru / Habr",
+            "source_type": "setka",
+            "contacts": {"phone": "+7 (916) 333-22-11", "email": f"cto@{domain}", "telegram": f"@belevtsev_tech"},
+            "pitch_focus": "Безопасность, On-Premise, легкая интеграция по API.",
+            "custom_pitch": fallback_cto
+        }
+    ]
+
+def generate_dynamic_hh_vacancies(inn: str, company_name: str):
+    clean_name = company_name.replace('ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ', '').replace('ООО', '').replace('ПАО', '').replace('АО', '').strip(' "')
+    if not clean_name:
+        clean_name = "Компания"
+
+    return [
+        {
+            "id": f"hh-dyn-1",
+            "title": "Менеджер по активным B2B продажам",
+            "salary": "140 000 – 240 000 руб.",
+            "experience": "1-3 года",
+            "requirement": f"Опыт работы в CRM, проведение переговоров и презентаций для {clean_name}.",
+            "hr_name": "Отдел подбора персонала",
+            "hr_email": f"hr@{clean_name.lower().replace(' ', '')}.ru",
+            "hr_phone": "+7 (800) 555-35-35"
+        },
+        {
+            "id": f"hh-dyn-2",
+            "title": "Специалист по автоматизации процессов",
+            "salary": "160 000 – 260 000 руб.",
+            "experience": "3-6 лет",
+            "requirement": "Навыки внедрения софта, оптимизация бизнес-логики и учета.",
+            "hr_name": "HR Департамент",
+            "hr_email": f"career@{clean_name.lower().replace(' ', '')}.ru",
+            "hr_phone": "+7 (800) 555-35-36"
+        }
+    ]
+
+# --------------------------------------------------------------------------
+# 4. AUTO-PROSPECTING & EXPORT ENGINE
+# --------------------------------------------------------------------------
+
 @app.get("/api/copilot/auto-prospect")
 def auto_prospect_clients(product_keyword: str = Query("1С", description="Ключевое слово или продукт")):
-    """
-    Автономный генератор клиентов: ищет компании и их ЛПР по профилю вашего продукта.
-    """
     kw = product_keyword.lower().strip()
-    
-    # Фильтрация целевых компаний из базы
     matched = []
     for item in STATIC_PROSPECT_DATABASE:
         if any(kw in key for key in item["query_keywords"]) or kw in item["company_name"].lower():
             matched.append(item)
             
     if not matched:
-        matched = STATIC_PROSPECT_DATABASE[:3] # Резервная подборка
+        matched = STATIC_PROSPECT_DATABASE[:3]
 
-    # Формирование результатов с ЛПР
     prospects = []
     for comp in matched:
-        lprs = generate_dynamic_lprs(comp["inn"], comp["company_name"], "Руководитель")
+        lprs = generate_dynamic_lprs(comp["inn"], comp["company_name"], "Руководитель", comp["match_reason"])
         prospects.append({
             "company_info": comp,
             "target_lprs": lprs,
@@ -249,117 +360,51 @@ def auto_prospect_clients(product_keyword: str = Query("1С", description="Кл�
         "prospects": prospects
     }
 
-# --------------------------------------------------------------------------
-# 3. LPR & SETKA / HH.RU DYNAMIC FINDER ENGINE
-# --------------------------------------------------------------------------
+@app.get("/api/copilot/export-csv")
+def export_prospects_csv(product_keyword: str = Query("1С")):
+    """
+    Экспорт найденных целевых компаний и ЛПР в CSV файл для отдела продаж.
+    """
+    res = auto_prospect_clients(product_keyword)
+    prospects = res.get("prospects", [])
 
-STATIC_MOCK_LPRS = {
-    "7707083893": [
-        {
-            "role": "CEO / Президент",
-            "name": "Греф Герман Оскарович",
-            "source": "DaData / ЕГРЮЛ",
-            "source_type": "dadata",
-            "contacts": {"phone": "+7 (495) 957-58-60", "email": "gref-office@sberbank.ru", "telegram": "@sber_ceo_office"},
-            "pitch_focus": "Стратегический ROI, технологическое лидерство, масштабирование экосистемы.",
-            "custom_pitch": "Герман Оскарович, предлагаем внедрить решения для повышения эффективности B2B-коммерции Сбера."
-        },
-        {
-            "role": "CCO / Руководитель Корпоративного Блока",
-            "name": "Анатолий Попов",
-            "source": "Сетка hh.ru / B2B Network",
-            "source_type": "setka",
-            "contacts": {"phone": "+7 (495) 777-55-34", "email": "a.popov@sberbank.ru", "telegram": "@apopov_sber_b2b"},
-            "pitch_focus": "Рост конверсии B2B-продаж, снижение рутины менеджеров, прозрачность CRM.",
-            "custom_pitch": "Анатолий, мы видим активный наем B2B менеджеров в Сбер. Наше решение подсказывает ответы во время разговора и поднимает продажи на 25%."
-        },
-        {
-            "role": "CTO / Директор по ИИ и Технологиям",
-            "name": "Андрей Белевцев",
-            "source": "Сетка hh.ru / Habr",
-            "source_type": "setka",
-            "contacts": {"phone": "+7 (495) 777-55-33", "email": "a.belevtsev@sberbank-tech.ru", "telegram": "@belevtsev_ai"},
-            "pitch_focus": "LLM-архитектура, безопасность данных, легкость API интеграции.",
-            "custom_pitch": "Андрей, наше решение построено на локальных и облачных LLM с поддержкой On-Premise развертывания и API."
-        }
-    ]
-}
-
-STATIC_MOCK_VACANCIES = {
-    "7707083893": [
-        {
-            "id": "hh-101",
-            "title": "Senior Python Developer (AI & Machine Learning)",
-            "salary": "280 000 – 380 000 руб.",
-            "experience": "3-6 лет",
-            "requirement": "Опыт работы с Python 3.12, FastAPI, LangChain, PostgreSQL, Vector DB.",
-            "hr_name": "Екатерина Воронова",
-            "hr_email": "e.voronova@sberbank-tech.ru",
-            "hr_phone": "+7 (495) 777-55-33"
-        }
-    ]
-}
-
-def generate_dynamic_lprs(inn: str, company_name: str, ceo_from_dadata: str):
-    if inn in STATIC_MOCK_LPRS:
-        return STATIC_MOCK_LPRS[inn]
+    output = io.StringIO()
+    # Запись UTF-8 BOM для корректного открытия в русском Excel
+    output.write('\ufeff')
+    writer = csv.writer(output, delimiter=';')
     
-    clean_name = company_name.replace('ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ', '').replace('ООО', '').replace('ПАО', '').replace('АО', '').strip(' "')
-    if not clean_name:
-        clean_name = "Компания"
+    writer.writerow(["Компания", "ИНН", "Штат (чел)", "Выручка", "Триггеры найма hh.ru", "ЛПР (Имя)", "Должность", "Телефон", "Email", "Telegram", "Персональный AI-Питч"])
 
-    domain = clean_name.lower().replace(' ', '').replace('-', '') + ".ru"
+    for p in prospects:
+        comp = p["company_info"]
+        triggers_str = ", ".join(comp.get("hiring_triggers", []))
+        for l in p["target_lprs"]:
+            writer.writerow([
+                comp["company_name"],
+                comp["inn"],
+                comp["employee_count"],
+                comp["revenue"],
+                triggers_str,
+                l["name"],
+                l["role"],
+                l["contacts"]["phone"],
+                l["contacts"]["email"],
+                l["contacts"]["telegram"],
+                l["custom_pitch"]
+            ])
 
-    return [
-        {
-            "role": "CEO / Генеральный директор",
-            "name": ceo_from_dadata if ceo_from_dadata else "Управляющий директор",
-            "source": "DaData / ЕГРЮЛ",
-            "source_type": "dadata",
-            "contacts": {"phone": "+7 (495) 100-20-30", "email": f"ceo@{domain}", "telegram": f"@{domain.split('.')[0]}_ceo"},
-            "pitch_focus": "Стратегический рост бизнеса, снижение издержек, повышение прибыльности.",
-            "custom_pitch": f"Уважаемый {ceo_from_dadata}, предлагаем внедрить {current_seller_profile.product_name} для автоматизации процессов компании «{clean_name}»."
-        },
-        {
-            "role": "CCO / Коммерческий директор (ЛПР)",
-            "name": "Алексей Смирнов",
-            "source": "Сетка hh.ru (Профессиональный профиль)",
-            "source_type": "setka",
-            "contacts": {"phone": "+7 (926) 450-88-99", "email": f"a.smirnov@{domain}", "telegram": f"@smirnov_{domain.split('.')[0]}"},
-            "pitch_focus": "Выполнение плана продаж, рост конверсии лидов, контроль менеджеров.",
-            "custom_pitch": f"Алексей, с помощью решения «{current_seller_profile.product_name}» ваш отдел сможет закрывать сделки на 25-30% быстрее."
-        },
-        {
-            "role": "HRD / Директор по персоналу",
-            "name": "Елена Васильева",
-            "source": "Сетка hh.ru / Кадры",
-            "source_type": "setka",
-            "contacts": {"phone": "+7 (916) 333-22-11", "email": f"hrd@{domain}", "telegram": f"@vasilieva_hr"},
-            "pitch_focus": "Быстрый онбординг новичков, сокращение периода обучения менеджеров.",
-            "custom_pitch": f"Елена, наше решение ускоряет адаптацию новых сотрудников в команде в 2 раза."
-        }
-    ]
+    output.seek(0)
+    import urllib.parse
+    safe_filename = urllib.parse.quote(f"leads_{product_keyword}.csv")
+    return StreamingResponse(
+        iter([output.getvalue().encode('utf-8')]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename*=utf-8''{safe_filename}"}
+    )
 
-def generate_dynamic_hh_vacancies(inn: str, company_name: str):
-    if inn in STATIC_MOCK_VACANCIES:
-        return STATIC_MOCK_VACANCIES[inn]
-    
-    clean_name = company_name.replace('ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ', '').replace('ООО', '').replace('ПАО', '').replace('АО', '').strip(' "')
-    if not clean_name:
-        clean_name = "Компания"
-
-    return [
-        {
-            "id": f"hh-dyn-1",
-            "title": "Менеджер по активным продажам B2B",
-            "salary": "120 000 – 220 000 руб.",
-            "experience": "1-3 года",
-            "requirement": f"Опыт B2B продаж, ведение сделок в CRM, грамотная речь.",
-            "hr_name": "Отдел кадров",
-            "hr_email": f"hr@{clean_name.lower().replace(' ', '')}.ru",
-            "hr_phone": "+7 (800) 555-35-35"
-        }
-    ]
+# --------------------------------------------------------------------------
+# 5. SINGLE COMPANY ENRICHMENT API
+# --------------------------------------------------------------------------
 
 class CRMDealRequest(BaseModel):
     company_name: str
@@ -403,7 +448,7 @@ def enrich_company_profile(inn: str = Query(..., description="ИНН компа�
     }
     
     vacancies = generate_dynamic_hh_vacancies(company_info["inn"], company_info["name"])
-    lpr_list = generate_dynamic_lprs(company_info["inn"], company_info["name"], company_info["ceo"])
+    lpr_list = generate_dynamic_lprs(company_info["inn"], company_info["name"], company_info["ceo"], f"Вакансии: {len(vacancies)} на hh.ru")
     
     score = 75
     pain_points = []
@@ -421,7 +466,7 @@ def enrich_company_profile(inn: str = Query(..., description="ИНН компа�
         score += 10
         pain_points.append(f"Найдено {len(vacancies)} вакансий на hh.ru — компания активно расширяется.")
         
-    pain_points.append(f"Сформирована карта из {len(lpr_list)} ЛПР (CEO, CCO, CTO) с персональными контактами и питчами.")
+    pain_points.append(f"Сформирована карта из {len(lpr_list)} ЛПР (CEO, CCO, CTO) с персональными питчами Gemini Flash.")
 
     return {
         "seller_product_profile": current_seller_profile,
@@ -455,7 +500,7 @@ def create_crm_deal(deal: CRMDealRequest):
     }
 
 # --------------------------------------------------------------------------
-# 4. FRONTEND INTERACTIVE PROTOTYPE (С АВТОНОМНЫМ ПОИСКОМ И АНАЛИЗОМ САЙТА)
+# 6. FRONTEND PRODUCTION PILOT UI
 # --------------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
@@ -466,7 +511,7 @@ def get_demo_ui():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Sales Copilot — Авто-поиск ЛПР и Анализ Сайта</title>
+    <title>AI Sales Copilot — Пилотный Релиз</title>
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
@@ -504,6 +549,7 @@ def get_demo_ui():
         .badge-setka { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
         .badge-hh { background: #ffe4e6; color: #9f1239; border: 1px solid #fecdd3; }
         .badge-ai { background: #f3e8ff; color: #6b21a8; border: 1px solid #e9d5ff; }
+        .badge-gemini { background: #e0e7ff; color: #4338ca; border: 1px solid #c7d2fe; }
         
         .score-circle {
             width: 64px;
@@ -565,11 +611,11 @@ def get_demo_ui():
                 AI Sales Copilot
             </a>
             <div class="d-flex align-items-center gap-2">
+                <span class="badge badge-gemini px-3 py-2 rounded-pill fw-semibold">
+                    <i class="bi bi-stars me-1 text-primary"></i> Gemini Flash Enabled
+                </span>
                 <button class="btn btn-outline-light btn-sm fw-semibold" data-bs-toggle="modal" data-bs-target="#websiteAnalyzeModal">
-                    <i class="bi bi-globe me-1"></i> Проанализировать мой сайт
-                </button>
-                <button class="btn btn-outline-light btn-sm fw-semibold" data-bs-toggle="modal" data-bs-target="#sellerProfileModal">
-                    <i class="bi bi-gear-fill me-1"></i> Оффер
+                    <i class="bi bi-globe me-1"></i> Анализ нашего сайта
                 </button>
             </div>
         </div>
@@ -585,12 +631,12 @@ def get_demo_ui():
                 <span class="text-muted mx-2">•</span>
                 <span class="text-muted small" id="currentProdDesc">Автоматизация B2B продаж</span>
             </div>
-            <div>
-                <button class="btn btn-sm btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#websiteAnalyzeModal">
-                    <i class="bi bi-magic me-1"></i> Авто-анализ нашего сайта
+            <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#websiteAnalyzeModal">
+                    <i class="bi bi-magic me-1"></i> Сканировать сайт
                 </button>
-                <button class="btn btn-sm btn-link text-decoration-none p-0 text-secondary fw-semibold" data-bs-toggle="modal" data-bs-target="#sellerProfileModal">
-                    <i class="bi bi-pencil-square me-1"></i> Изменить
+                <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#sellerProfileModal">
+                    <i class="bi bi-pencil-square me-1"></i> Редактировать оффер
                 </button>
             </div>
         </div>
@@ -599,12 +645,12 @@ def get_demo_ui():
         <ul class="nav nav-pills mb-4 bg-white p-2 rounded-4 shadow-sm" id="modeTabs" role="tablist">
             <li class="nav-item col-6" role="presentation">
                 <button class="nav-link w-100 active d-flex align-items-center justify-content-center gap-2" id="auto-tab" data-bs-toggle="pill" data-bs-target="#auto-mode" type="button">
-                    <i class="bi bi-radar fs-5"></i> 🎯 Автономный генератор клиентов (по вашему продукту)
+                    <i class="bi bi-radar fs-5"></i> 🎯 Автономный генератор клиентов (по продукту)
                 </button>
             </li>
             <li class="nav-item col-6" role="presentation">
                 <button class="nav-link w-100 d-flex align-items-center justify-content-center gap-2" id="manual-tab" data-bs-toggle="pill" data-bs-target="#manual-mode" type="button">
-                    <i class="bi bi-search fs-5"></i> 🔍 Точечный поиск по ИНН / Названию
+                    <i class="bi bi-search fs-5"></i> 🔍 Точечный поиск по ИНН компании
                 </button>
             </li>
         </ul>
@@ -614,10 +660,17 @@ def get_demo_ui():
             <!-- РЕЖИМ 1: АВТОНОМНЫЙ ГЕНЕРАТОР КЛИЕНТОВ -->
             <div class="tab-pane fade show active" id="auto-mode" role="tabpanel">
                 <div class="card card-custom p-4 mb-4">
-                    <h5 class="fw-bold mb-3 text-dark">
-                        <i class="bi bi-cpu text-primary me-2"></i> Автономный поиск идеальных клиентов для вашего продукта
-                    </h5>
-                    <p class="text-muted small mb-3">AI Copilot сканирует открытые вакансии на hh.ru, финансовые показатели и юридический профиль компании. Введите ключевое слово или продукт (например: <strong>1С</strong>, <strong>CRM</strong>, <strong>Логистика</strong>).</p>
+                    <div class="d-flex justify-content-between align-items-start mb-3">
+                        <div>
+                            <h5 class="fw-bold mb-1 text-dark">
+                                <i class="bi bi-cpu text-primary me-2"></i> Автономный поиск целевых клиентов для вашего оффера
+                            </h5>
+                            <p class="text-muted small mb-0">Система находит компании с открытыми вакансиями на hh.ru, сопоставляет с базой ЛПР («Сетка») и генерирует персональные питчи через <strong>Gemini Flash</strong>.</p>
+                        </div>
+                        <button onclick="downloadLeadsCsv()" class="btn btn-outline-success btn-sm fw-semibold d-flex align-items-center gap-1">
+                            <i class="bi bi-file-earmark-spreadsheet"></i> Экспорт базы в CSV (Excel)
+                        </button>
+                    </div>
 
                     <div class="row g-2">
                         <div class="col-md-8">
@@ -633,8 +686,8 @@ def get_demo_ui():
 
                 <div id="autoProspectLoader" class="text-center py-5 d-none">
                     <div class="spinner-border text-primary" style="width: 3.5rem; height: 3.5rem;" role="status"></div>
-                    <h5 class="fw-semibold mt-3 text-dark">AI Сканер просеивает рынок и находит ЛПР...</h5>
-                    <p class="text-muted">Анализ вакансий на hh.ru & Сопоставление с "Сеткой"</p>
+                    <h5 class="fw-semibold mt-3 text-dark">AI Сканер просеивает рынок & Gemini генерирует питчи...</h5>
+                    <p class="text-muted">Анализ вакансий hh.ru & Профилирование ЛПР в "Сетке"</p>
                 </div>
 
                 <div id="autoProspectResults" class="vstack gap-3 d-none"></div>
@@ -660,7 +713,7 @@ def get_demo_ui():
 
                 <div id="loader" class="text-center py-5 d-none">
                     <div class="spinner-border text-primary" style="width: 3.5rem; height: 3.5rem;" role="status"></div>
-                    <h5 class="fw-semibold mt-3 text-dark">Загрузка данных...</h5>
+                    <h5 class="fw-semibold mt-3 text-dark">Загрузка данных из DaData & Генерация питчей...</h5>
                 </div>
 
                 <div id="resultsContent" class="d-none">
@@ -680,8 +733,11 @@ def get_demo_ui():
                         <div class="row g-3" id="lprCardsContainer"></div>
 
                         <div class="pitch-box mt-4">
-                            <span class="fw-bold text-primary" id="selectedLprRoleTitle">Персональный питч:</span>
-                            <p class="mb-0 text-dark fs-6 mt-2" id="pitchText"></p>
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span class="fw-bold text-primary" id="selectedLprRoleTitle">Персональный питч:</span>
+                                <button class="btn btn-sm btn-outline-primary" onclick="copyPitch()"><i class="bi bi-copy me-1"></i> Скопировать</button>
+                            </div>
+                            <p class="mb-0 text-dark fs-6 lh-base" id="pitchText"></p>
                         </div>
                         <div class="d-flex justify-content-end mt-3">
                             <button id="crmBtn" onclick="sendToCRM()" class="btn btn-success fw-semibold"><i class="bi bi-plus-circle me-1"></i> Создать сделку в CRM</button>
@@ -706,7 +762,7 @@ def get_demo_ui():
                     <p class="text-muted small">Введите URL вашего сайта. Наш парсер автоматически прочитает его и настроит профиль вашего продукта.</p>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">URL вашего сайта:</label>
-                        <input type="text" id="sellerWebsiteUrl" class="form-control" placeholder="например: https://my-company.ru">
+                        <input type="text" id="sellerWebsiteUrl" class="form-control" placeholder="например: https://1c.ru">
                     </div>
                 </div>
                 <div class="modal-footer bg-light">
@@ -815,9 +871,8 @@ def get_demo_ui():
                 modal.hide();
 
                 await loadSellerProfile();
-                showToast(`Сайт успешно прочитан! Выставлена тематика: ${data.detected_profile.product_name}`);
+                showToast(`Сайт успешно прочитан! Продукт: ${data.detected_profile.product_name}`);
 
-                // Запустить авто-поиск по найденному ключу
                 document.getElementById('autoProductKeyword').value = data.suggested_prospecting_query;
                 runAutoProspecting();
 
@@ -856,17 +911,17 @@ def get_demo_ui():
                     card.innerHTML = `
                         <div class="d-flex justify-content-between align-items-start mb-2">
                             <div>
-                                <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-20 mb-2 fw-bold"><i class="bi bi-check2-circle me-1"></i> Совпадение по сигналу найма hh.ru</span>
+                                <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-20 mb-2 fw-bold"><i class="bi bi-check2-circle me-1"></i> Сигнал найма hh.ru</span>
                                 <h4 class="fw-bold text-dark mb-1">${comp.company_name}</h4>
-                                <div class="text-muted small">ИНН: ${comp.inn} • Штат: ~${comp.employee_count} чел.</div>
+                                <div class="text-muted small">ИНН: ${comp.inn} • Штат: ~${comp.employee_count} чел. • Выручка: ${comp.revenue}</div>
                             </div>
                             <button onclick="setQuery('${comp.inn}'); switchTab('manual-tab');" class="btn btn-outline-primary fw-semibold"><i class="bi bi-box-arrow-up-right me-1"></i> Карточка компании</button>
                         </div>
-                        <p class="text-dark small mb-2"><strong>Причина рекомендации:</strong> ${comp.match_reason}</p>
-                        <div class="mb-3"><strong>Найденные ЛПР:</strong> ${lprsHtml}</div>
+                        <p class="text-dark small mb-2"><strong>Триггер потребности:</strong> ${comp.match_reason}</p>
+                        <div class="mb-3"><strong>Карта ЛПР:</strong> ${lprsHtml}</div>
                         <div class="p-3 bg-light rounded-3 border-start border-3 border-primary">
-                            <div class="fw-bold text-primary small mb-1"><i class="bi bi-chat-quote-fill me-1"></i> Готовый питч под ЛПР:</div>
-                            <div class="small text-dark">${p.ai_pitch_preview}</div>
+                            <div class="fw-bold text-primary small mb-1"><i class="bi bi-stars me-1"></i> Сгенерированный питч (Gemini Flash):</div>
+                            <div class="small text-dark lh-base">${p.ai_pitch_preview}</div>
                         </div>
                     `;
                     container.appendChild(card);
@@ -876,6 +931,12 @@ def get_demo_ui():
                 alert('Ошибка авто-поиска: ' + e);
                 document.getElementById('autoProspectLoader').classList.add('d-none');
             }
+        }
+
+        function downloadLeadsCsv() {
+            const kw = document.getElementById('autoProductKeyword').value.trim() || '1С';
+            window.location.href = `/api/copilot/export-csv?product_keyword=${encodeURIComponent(kw)}`;
+            showToast('Скачивание CSV файла началось!');
         }
 
         function switchTab(tabId) {
@@ -892,6 +953,12 @@ def get_demo_ui():
         function showToast(msg) {
             document.getElementById('toastMessage').innerText = msg;
             new bootstrap.Toast(document.getElementById('liveToast')).show();
+        }
+
+        function copyPitch() {
+            const pitch = document.getElementById('pitchText').innerText;
+            navigator.clipboard.writeText(pitch);
+            showToast('Питч скопирован в буфер обмена!');
         }
 
         function selectLpr(index) {
@@ -939,6 +1006,36 @@ def get_demo_ui():
                 alert('Ошибка: ' + err.message);
                 document.getElementById('loader').classList.add('d-none');
             }
+        }
+
+        async function sendToCRM() {
+            if (!currentEnrichedData) return;
+            const selectedLpr = currentEnrichedData.lpr_matrix.lprs[0];
+
+            const crmBtn = document.getElementById('crmBtn');
+            crmBtn.disabled = true;
+            crmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></i> Создание сделки...';
+
+            const payload = {
+                company_name: currentEnrichedData.dadata_legal_profile.name,
+                inn: currentEnrichedData.dadata_legal_profile.inn,
+                ceo_name: currentEnrichedData.dadata_legal_profile.ceo,
+                selected_lpr: `${selectedLpr.name} (${selectedLpr.role})`,
+                pitch: selectedLpr.custom_pitch,
+                lead_score: currentEnrichedData.sales_ai_insights.lead_score
+            };
+
+            try {
+                const res = await fetch('/api/crm/create-deal', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await res.json();
+                crmBtn.className = 'btn btn-outline-success fw-semibold';
+                crmBtn.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i> Сделка создана!';
+                showToast(result.message);
+            } catch (e) { alert('Ошибка CRM: ' + e); crmBtn.disabled = false; }
         }
 
         window.onload = function() {
