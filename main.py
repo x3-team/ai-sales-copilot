@@ -500,11 +500,41 @@ def create_crm_deal(deal: CRMDealRequest):
     }
 
 # --------------------------------------------------------------------------
-# 6. FRONTEND PRODUCTION PILOT UI
+# 6. FRONTEND PRODUCTION PILOT UI & PROMO LANDING ROUTES
 # --------------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
+def get_landing_page():
+    """
+    Главная страница: Промо-лендинг продукта (для презентации клиентам и модерации dev.hh.ru)
+    """
+    landing_path = os.path.join(os.path.dirname(__file__), "templates", "landing.html")
+    if os.path.exists(landing_path):
+        with open(landing_path, "r", encoding="utf-8") as f:
+            return f.read()
+    return "<h1>AI Sales Copilot Landing</h1>"
+
+@app.get("/privacy", response_class=HTMLResponse)
+def get_privacy_page():
+    privacy_path = os.path.join(os.path.dirname(__file__), "templates", "privacy.html")
+    if os.path.exists(privacy_path):
+        with open(privacy_path, "r", encoding="utf-8") as f:
+            return f.read()
+    return "<h1>Политика конфиденциальности</h1>"
+
+@app.get("/terms", response_class=HTMLResponse)
+def get_terms_page():
+    terms_path = os.path.join(os.path.dirname(__file__), "templates", "terms.html")
+    if os.path.exists(terms_path):
+        with open(terms_path, "r", encoding="utf-8") as f:
+            return f.read()
+    return "<h1>Условия использования</h1>"
+
+@app.get("/app", response_class=HTMLResponse)
 def get_demo_ui():
+    """
+    Рабочий кабинет / Интерактивный генератор клиентов
+    """
     return """
 <!DOCTYPE html>
 <html lang="ru">
@@ -604,12 +634,17 @@ def get_demo_ui():
     <!-- Шапка -->
     <nav class="navbar navbar-dark navbar-custom mb-4">
         <div class="container">
-            <a class="navbar-brand d-flex align-items-center fw-bold fs-4" href="#">
-                <span class="p-2 bg-primary text-white rounded-3 me-2 d-inline-flex align-items-center justify-content-center" style="width: 38px; height: 38px;">
-                    <i class="bi bi-robot fs-5"></i>
-                </span>
-                AI Sales Copilot
-            </a>
+            <div class="d-flex align-items-center gap-3">
+                <a class="navbar-brand d-flex align-items-center fw-bold fs-4 m-0" href="/">
+                    <span class="p-2 bg-primary text-white rounded-3 me-2 d-inline-flex align-items-center justify-content-center" style="width: 38px; height: 38px;">
+                        <i class="bi bi-robot fs-5"></i>
+                    </span>
+                    AI Sales Copilot
+                </a>
+                <a href="/" class="btn btn-outline-light btn-sm text-decoration-none px-3 py-1 rounded-pill opacity-80 hover:opacity-100">
+                    <i class="bi bi-arrow-left me-1"></i> На сайт
+                </a>
+            </div>
             <div class="d-flex align-items-center gap-2">
                 <span class="badge badge-gemini px-3 py-2 rounded-pill fw-semibold">
                     <i class="bi bi-stars me-1 text-primary"></i> Gemini Flash Enabled
