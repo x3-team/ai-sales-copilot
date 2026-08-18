@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Sales Copilot — Автономный поиск B2B-клиентов и ЛПР по триггерам рынка</title>
-    <meta name="description" content="AI Sales Copilot сканирует открытые вакансии на hh.ru, определяет масштаб бизнеса по DaData, находит контакты ЛПР и генерирует персональные B2B-питчи через Gemini Flash.">
+    <title>AI Sales Copilot — Автономный поиск B2B-клиентов и лиц, принимающих решения</title>
+    <meta name="description" content="AI Sales Copilot находит компании с подтвержденным спросом, определяет лиц, принимающих решения (CEO, CCO, CTO), и создает точечные персонализированные предложения.">
     
     <!-- OpenGraph -->
-    <meta property="og:title" content="AI Sales Copilot — Автономная генерация B2B продаж">
-    <meta property="og:description" content="Укажите ваш сайт или продукт — AI Copilot найдет компании с горячими потребностями на hh.ru, определит лиц, принимающих решения, и напишет персональный питч.">
+    <meta property="og:title" content="AI Sales Copilot — Интеллектуальный поиск B2B-клиентов и ЛПР">
+    <meta property="og:description" content="Автономный пайплайн генерации B2B-сделок на основе сигналов рынка, анализа потребности компаний и прямой связи с лицами, принимающими решения.">
     <meta property="og:type" content="website">
 
     <!-- Tailwind CSS CDN -->
@@ -30,7 +30,7 @@
                         }
                     },
                     fontFamily: {
-                        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif']
+                        sans: ['Plus Jakarta Sans', 'Inter', 'system-ui', '-apple-system', 'sans-serif']
                     }
                 }
             }
@@ -50,7 +50,7 @@
             color: #f1f5f9;
         }
         .glow-effect {
-            background: radial-gradient(circle at 50% -20%, rgba(99, 102, 241, 0.25), transparent 70%);
+            background: radial-gradient(circle at 50% -20%, rgba(99, 102, 241, 0.22), transparent 70%);
         }
         .card-glow {
             background: linear-gradient(180deg, rgba(30, 41, 59, 0.4) 0%, rgba(15, 23, 42, 0.6) 100%);
@@ -85,21 +85,21 @@
                 </div>
                 <div>
                     <span class="text-xl font-bold tracking-tight text-white">AI Sales Copilot</span>
-                    <span class="text-[10px] font-mono tracking-wider uppercase text-indigo-400 block -mt-1 font-semibold">B2B Growth Engine</span>
+                    <span class="text-[10px] font-mono tracking-wider uppercase text-indigo-400 block -mt-1 font-semibold">B2B Revenue Acceleration</span>
                 </div>
             </div>
 
             <nav class="hidden md:flex items-center gap-8 text-sm font-medium text-slate-300">
                 <a href="#how-it-works" class="hover:text-white transition">Как это работает</a>
-                <a href="#triggers" class="hover:text-white transition">Сигналы и Триггеры</a>
-                <a href="#lpr-matrix" class="hover:text-white transition">Поиск ЛПР</a>
+                <a href="#triggers" class="hover:text-white transition">Сигналы спроса</a>
+                <a href="#lpr-matrix" class="hover:text-white transition">Карта ЛПР</a>
                 <a href="#integrations" class="hover:text-white transition">Интеграции</a>
                 <a href="#security" class="hover:text-white transition">Безопасность 152-ФЗ</a>
             </nav>
 
             <div class="flex items-center gap-3">
                 <a href="/app" class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm transition shadow-lg shadow-indigo-600/25 flex items-center gap-2">
-                    <span>Открыть App</span>
+                    <span>Открыть сервис</span>
                     <i class="bi bi-arrow-right"></i>
                 </a>
             </div>
@@ -113,31 +113,31 @@
             <!-- Бейдж релиза -->
             <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-xs font-semibold mb-8">
                 <span class="w-2 h-2 rounded-full bg-emerald-400 badge-live animate-pulse"></span>
-                <span>Powered by DaData API & Gemini Flash LLM</span>
+                <span>Signal-Based B2B Outbound Intelligence</span>
             </div>
 
             <!-- Главный заголовок -->
             <h1 class="text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-white max-w-5xl mx-auto leading-[1.1] mb-6">
-                Автономный поиск <span class="text-gradient">B2B-клиентов и ЛПР</span> по триггерам рынка
+                Автономный поиск <span class="text-gradient">B2B-клиентов и ЛПР</span> с горячим спросом
             </h1>
 
             <p class="text-lg sm:text-xl text-slate-400 max-w-3xl mx-auto font-normal leading-relaxed mb-10">
-                Укажите адрес вашего сайта или продукта — AI Copilot найдет компании с открытыми потребностями на hh.ru, проверит масштаб по DaData, определит лиц, принимающих решения, и напишет персональный питч.
+                Забудьте о нерелевантных базах. Система находит компании в момент появления потребности, определяет ключевых руководителей и готовит индивидуальные предложения под конкретную боль бизнеса.
             </p>
 
             <!-- Кнопки действия -->
             <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
                 <a href="/app" class="w-full sm:w-auto px-8 py-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-base transition shadow-xl shadow-indigo-600/30 flex items-center justify-center gap-3">
-                    <i class="bi bi-rocket-takeoff-fill"></i>
-                    <span>Запустить генерацию базы</span>
+                    <i class="bi bi-lightning-charge-fill"></i>
+                    <span>Сгенерировать базу клиентов</span>
                 </a>
                 <a href="#how-it-works" class="w-full sm:w-auto px-8 py-4 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold text-base transition flex items-center justify-center gap-2">
                     <i class="bi bi-play-circle"></i>
-                    <span>Смотреть как работает</span>
+                    <span>Как это работает</span>
                 </a>
             </div>
 
-            <!-- Визуальный мокап продукта (Clay/11x style) -->
+            <!-- Визуальный мокап продукта -->
             <div class="relative max-w-5xl mx-auto">
                 <div class="absolute -inset-1 rounded-2xl bg-gradient-to-r from-indigo-500/30 via-purple-500/20 to-emerald-500/30 blur-xl opacity-50"></div>
                 
@@ -149,14 +149,14 @@
                             <span class="w-3 h-3 rounded-full bg-rose-500/80"></span>
                             <span class="w-3 h-3 rounded-full bg-amber-500/80"></span>
                             <span class="w-3 h-3 rounded-full bg-emerald-500/80"></span>
-                            <span class="text-xs text-slate-400 font-mono ml-2">copilot.workspace / auto-prospecting-run</span>
+                            <span class="text-xs text-slate-400 font-mono ml-2">sales-intelligence.pipeline / active-prospects</span>
                         </div>
                         <div class="flex items-center gap-3">
                             <span class="px-3 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 text-xs font-semibold border border-emerald-500/20 flex items-center gap-1.5">
-                                <i class="bi bi-check-circle-fill"></i> 5 Hot Leads Sourced
+                                <i class="bi bi-check-circle-fill"></i> Подтвержденный триггер спроса
                             </span>
                             <span class="px-3 py-1 rounded-lg bg-indigo-500/10 text-indigo-400 text-xs font-semibold border border-indigo-500/20">
-                                ICP: 1С & B2B Solutions
+                                ICP Match: 96%
                             </span>
                         </div>
                     </div>
@@ -167,29 +167,29 @@
                         <!-- Левая колонка: Профиль компании -->
                         <div class="lg:col-span-5 rounded-xl bg-slate-900/80 border border-slate-800 p-4">
                             <div class="flex items-center justify-between mb-3">
-                                <span class="px-2.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 text-[11px] font-bold uppercase tracking-wider border border-indigo-500/20">DaData Live</span>
-                                <span class="text-xs font-bold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-800/40">Score 92/100</span>
+                                <span class="px-2.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 text-[11px] font-bold uppercase tracking-wider border border-indigo-500/20">Верифицированный профиль</span>
+                                <span class="text-xs font-bold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-800/40">Lead Score 92/100</span>
                             </div>
                             <h3 class="text-lg font-bold text-white mb-1">ООО «Мегаполис Логистика»</h3>
                             <p class="text-xs text-slate-400 mb-3">ИНН: 7709440038 • 450 сотрудников • Выручка 4.2 млрд ₽</p>
                             
                             <div class="space-y-2 border-t border-slate-800/80 pt-3 text-xs">
                                 <div class="flex items-center justify-between text-slate-300">
-                                    <span class="text-slate-500">Сигнал hh.ru:</span>
-                                    <span class="text-rose-400 font-semibold">Ищут 1С:УТ разработчика</span>
+                                    <span class="text-slate-500">Сигнал потребности:</span>
+                                    <span class="text-rose-400 font-semibold">Масштабирование и оптимизация учета</span>
                                 </div>
                                 <div class="flex items-center justify-between text-slate-300">
-                                    <span class="text-slate-500">Боль клиента:</span>
-                                    <span class="text-slate-300">Сбои складского учета</span>
+                                    <span class="text-slate-500">Ключевой триггер:</span>
+                                    <span class="text-slate-300">Рост нагрузки на склад и учетные базы</span>
                                 </div>
                                 <div class="flex items-center justify-between text-slate-300">
-                                    <span class="text-slate-500">Стек:</span>
-                                    <span class="text-slate-300 font-mono">1С:Предприятие 8.3, CRM</span>
+                                    <span class="text-slate-500">Технологический стек:</span>
+                                    <span class="text-slate-300 font-mono">ERP-системы, CRM, B2B-воронки</span>
                                 </div>
                             </div>
                         </div>
 
-                        <!-- Правая колонка: Найденный ЛПР и Питч Gemini -->
+                        <!-- Правая колонка: Найденный ЛПР и Питч -->
                         <div class="lg:col-span-7 rounded-xl bg-slate-900/80 border border-slate-800 p-4 flex flex-col justify-between">
                             <div>
                                 <div class="flex items-center justify-between mb-3">
@@ -201,16 +201,16 @@
                                         </div>
                                     </div>
                                     <span class="text-xs text-slate-400 font-mono flex items-center gap-1.5">
-                                        <i class="bi bi-telegram text-sky-400"></i> @smirnov_megapolis
+                                        <i class="bi bi-telegram text-sky-400"></i> Прямой контакт найден
                                     </span>
                                 </div>
 
                                 <div class="p-3.5 rounded-lg bg-indigo-950/30 border border-indigo-500/20 mb-3">
                                     <div class="text-[11px] font-bold text-indigo-300 mb-1 flex items-center gap-1.5">
-                                        <i class="bi bi-stars text-amber-400"></i> Персональный питч от Gemini Flash:
+                                        <i class="bi bi-stars text-amber-400"></i> Персонализированный питч под роль ЛПР:
                                     </div>
                                     <p class="text-xs text-slate-200 leading-relaxed italic">
-                                        «Алексей, здравствуйте! Увидел вакансию 1С-разработчика для «Мегаполис Логистика» — понимаем, как зависания склада в 1С:УТ тормозят отгрузки. Мы специализируемся на оптимизации 1С и готовы устранить эти сбои за 3 дня без долгого найма. Созвонимся на 10 минут?»
+                                        «Алексей, здравствуйте! Обратил внимание на активное расширение логистических операций в «Мегаполис Логистика» — понимаем, как задержки в учетных системах могут сдерживать скорость отгрузок. Мы помогаем оптимизировать процессы и устранять узкие места в учете за несколько дней. Готовы показать результаты на 10-минутном созвоне?»
                                     </p>
                                 </div>
                             </div>
@@ -218,7 +218,7 @@
                             <div class="flex items-center justify-between pt-2 border-t border-slate-800 text-xs">
                                 <span class="text-slate-400"><i class="bi bi-check2-all text-emerald-400 me-1"></i> Контакты верифицированы</span>
                                 <span class="text-indigo-400 font-semibold flex items-center gap-1">
-                                    <i class="bi bi-arrow-right-circle"></i> Экспорт в amoCRM
+                                    <i class="bi bi-arrow-right-circle"></i> Готово к отправке в CRM
                                 </span>
                             </div>
                         </div>
@@ -236,9 +236,9 @@
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             
             <div class="text-center max-w-3xl mx-auto mb-16">
-                <span class="text-xs font-bold font-mono tracking-widest text-indigo-400 uppercase">Автономный рабочий процесс</span>
-                <h2 class="text-3xl sm:text-5xl font-extrabold text-white mt-3 mb-4">Как AI Copilot генерирует сделки</h2>
-                <p class="text-slate-400 text-base sm:text-lg">От сканирования вашего сайта до готового списка ЛПР и первого контакта проходит меньше 60 секунд.</p>
+                <span class="text-xs font-bold font-mono tracking-widest text-indigo-400 uppercase">Сквозной пайплайн</span>
+                <h2 class="text-3xl sm:text-5xl font-extrabold text-white mt-3 mb-4">Как система генерирует целевые сделки</h2>
+                <p class="text-slate-400 text-base sm:text-lg">От анализа вашего продукта до готового списка лиц, принимающих решения, и релевантного первого контакта.</p>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -248,12 +248,12 @@
                     <div class="w-12 h-12 rounded-xl bg-indigo-600/20 border border-indigo-500/30 text-indigo-400 flex items-center justify-center text-2xl font-bold mb-6">
                         1
                     </div>
-                    <h3 class="text-xl font-bold text-white mb-3">Анализ вашего сайта & Оффера</h3>
+                    <h3 class="text-xl font-bold text-white mb-3">Определение профиля вашего продукта</h3>
                     <p class="text-slate-400 text-sm leading-relaxed mb-4">
-                        Парсер мгновенно считывает URL вашей компании, определяет УТП (ценность), ключевые продукты и формулирует портрет идеального клиента (ICP).
+                        Система анализирует ваш сайт или вводные данные, выделяет ключевую ценность (Value Proposition) и точно определяет портрет идеального B2B-клиента (ICP).
                     </p>
                     <div class="flex items-center gap-2 text-xs font-mono text-indigo-300">
-                        <i class="bi bi-check-lg text-emerald-400"></i> Zero manual setup
+                        <i class="bi bi-check-lg text-emerald-400"></i> Автоматическая настройка за секунды
                     </div>
                 </div>
 
@@ -262,12 +262,12 @@
                     <div class="w-12 h-12 rounded-xl bg-indigo-600/20 border border-indigo-500/30 text-indigo-400 flex items-center justify-center text-2xl font-bold mb-6">
                         2
                     </div>
-                    <h3 class="text-xl font-bold text-white mb-3">Сканирование триггеров на hh.ru</h3>
+                    <h3 class="text-xl font-bold text-white mb-3">Мульти-факторный поиск сигналов спроса</h3>
                     <p class="text-slate-400 text-sm leading-relaxed mb-4">
-                        AI ищет компании с открытыми вакансиями, указывающими на прямую боль (например, поиск 1С-разработчиков, CRM-маркетологов или масштабирование продаж).
+                        Комплексный анализ рынка: технологический стек, динамика найма, рост бизнеса, финансовые показатели и появление конкретных операционных болей у компаний.
                     </p>
                     <div class="flex items-center gap-2 text-xs font-mono text-indigo-300">
-                        <i class="bi bi-check-lg text-emerald-400"></i> Signal-based outbound
+                        <i class="bi bi-check-lg text-emerald-400"></i> Только компании с актуальной потребностью
                     </div>
                 </div>
 
@@ -276,12 +276,12 @@
                     <div class="w-12 h-12 rounded-xl bg-indigo-600/20 border border-indigo-500/30 text-indigo-400 flex items-center justify-center text-2xl font-bold mb-6">
                         3
                     </div>
-                    <h3 class="text-xl font-bold text-white mb-3">Карта ЛПР & Питчинг Gemini</h3>
+                    <h3 class="text-xl font-bold text-white mb-3">Карта ЛПР и персонализированные питчи</h3>
                     <p class="text-slate-400 text-sm leading-relaxed mb-4">
-                        Определяются прямые контакты топов (CEO, CCO, CTO), а модель Gemini Flash генерирует уникальный скрипт под задачи каждого конкретного руководителя.
+                        Определение прямых контактов ключевых руководителей (CEO, CCO, CTO) и генерация точечного сообщения под зону ответственности каждого ЛПР.
                     </p>
                     <div class="flex items-center gap-2 text-xs font-mono text-indigo-300">
-                        <i class="bi bi-check-lg text-emerald-400"></i> 1-click CRM & CSV Export
+                        <i class="bi bi-check-lg text-emerald-400"></i> Экспорт в CRM и CSV в 1 клик
                     </div>
                 </div>
 
@@ -296,11 +296,11 @@
             
             <div class="flex flex-col md:flex-row md:items-end justify-between mb-16 gap-6">
                 <div>
-                    <span class="text-xs font-bold font-mono tracking-widest text-indigo-400 uppercase">Intent Data</span>
-                    <h2 class="text-3xl sm:text-5xl font-extrabold text-white mt-3">Почему это эффективнее спама</h2>
+                    <span class="text-xs font-bold font-mono tracking-widest text-indigo-400 uppercase">Мульти-факторные триггеры</span>
+                    <h2 class="text-3xl sm:text-5xl font-extrabold text-white mt-3">Комплексные сигналы готовности к покупке</h2>
                 </div>
                 <p class="text-slate-400 text-base max-w-md">
-                    Мы не рассылаем холодные сообщения наугад. Мы находим компании в момент, когда они сами заявили о своей потребности через наем.
+                    Мы объединяем различные маркеры активности компаний, чтобы находить клиентов в самый подходящий момент для первого касания.
                 </p>
             </div>
 
@@ -310,32 +310,32 @@
                     <div class="w-10 h-10 rounded-lg bg-rose-500/10 text-rose-400 flex items-center justify-center text-xl mb-4">
                         <i class="bi bi-briefcase-fill"></i>
                     </div>
-                    <h4 class="font-bold text-white mb-2">Открытые вакансии</h4>
-                    <p class="text-slate-400 text-xs leading-relaxed">Компания ищет программистов или РОПа — явный признак нехватки рук и готовности к аутсорсу.</p>
+                    <h4 class="font-bold text-white mb-2">Кадровая активность</h4>
+                    <p class="text-slate-400 text-xs leading-relaxed">Поиск профильных специалистов или руководителей — явный признак запуска новых проектов и готовности к привлечению подрядчиков.</p>
                 </div>
 
                 <div class="p-6 rounded-2xl bg-slate-900/50 border border-slate-800">
                     <div class="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center text-xl mb-4">
                         <i class="bi bi-graph-up-arrow"></i>
                     </div>
-                    <h4 class="font-bold text-white mb-2">Рост выручки (DaData)</h4>
-                    <p class="text-slate-400 text-xs leading-relaxed">Фильтрация компаний с выручкой от 100 млн ₽ — вы общаетесь только с платежеспособным бизнесом.</p>
+                    <h4 class="font-bold text-white mb-2">Финансовый рост</h4>
+                    <p class="text-slate-400 text-xs leading-relaxed">Динамика выручки и размер бизнеса подтверждают платежеспособность компании и наличие бюджета на развитие.</p>
                 </div>
 
                 <div class="p-6 rounded-2xl bg-slate-900/50 border border-slate-800">
                     <div class="w-10 h-10 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center text-xl mb-4">
                         <i class="bi bi-person-badge-fill"></i>
                     </div>
-                    <h4 class="font-bold text-white mb-2">Смена руководства</h4>
-                    <p class="text-slate-400 text-xs leading-relaxed">Новый коммерческий или технический директор пересматривает подрядчиков в первые 90 дней.</p>
+                    <h4 class="font-bold text-white mb-2">Организационные изменения</h4>
+                    <p class="text-slate-400 text-xs leading-relaxed">Смена ключевых топов или открытие новых направлений — идеальное окно возможностей для предложения новых решений.</p>
                 </div>
 
                 <div class="p-6 rounded-2xl bg-slate-900/50 border border-slate-800">
                     <div class="w-10 h-10 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center text-xl mb-4">
                         <i class="bi bi-code-square"></i>
                     </div>
-                    <h4 class="font-bold text-white mb-2">Стек технологий</h4>
-                    <p class="text-slate-400 text-xs leading-relaxed">Определение используемой CRM и учетных систем для предложения бесшовной интеграции.</p>
+                    <h4 class="font-bold text-white mb-2">Технологический профиль</h4>
+                    <p class="text-slate-400 text-xs leading-relaxed">Анализ используемого стека и цифровой зрелости компании для предложения полностью совместимых продуктов.</p>
                 </div>
 
             </div>
@@ -348,9 +348,9 @@
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             
             <div class="text-center max-w-3xl mx-auto mb-16">
-                <span class="text-xs font-bold font-mono tracking-widest text-indigo-400 uppercase">Decision Maker Matrix</span>
+                <span class="text-xs font-bold font-mono tracking-widest text-indigo-400 uppercase">Карта лиц, принимающих решения</span>
                 <h2 class="text-3xl sm:text-5xl font-extrabold text-white mt-3 mb-4">Адресный питч для каждого топ-менеджера</h2>
-                <p class="text-slate-400 text-base sm:text-lg">Один и тот же продукт продается по-разному в зависимости от роли собеседника.</p>
+                <p class="text-slate-400 text-base sm:text-lg">Один и тот же продукт продается по-разному в зависимости от роли собеседника и его KPI.</p>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -360,7 +360,7 @@
                         <span class="px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-400 text-xs font-bold border border-indigo-500/20">CEO / Собственник</span>
                         <i class="bi bi-person-circle text-xl text-slate-500"></i>
                     </div>
-                    <h4 class="text-lg font-bold text-white mb-2">Фокус на ROI и Капитализацию</h4>
+                    <h4 class="text-lg font-bold text-white mb-2">Фокус на ROI и масштабирование</h4>
                     <p class="text-slate-400 text-xs leading-relaxed mb-4">
                         Генеральному директору важны стратегические показатели: снижение затрат, масштабирование бизнеса и возврат инвестиций.
                     </p>
@@ -374,12 +374,12 @@
                         <span class="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-xs font-bold border border-emerald-500/20">CCO / Коммерческий директор</span>
                         <i class="bi bi-trophy-fill text-xl text-emerald-400"></i>
                     </div>
-                    <h4 class="text-lg font-bold text-white mb-2">Фокус на Конверсию и План Продаж</h4>
+                    <h4 class="text-lg font-bold text-white mb-2">Фокус на конверсию и выполнение плана</h4>
                     <p class="text-slate-400 text-xs leading-relaxed mb-4">
-                        Коммерческому директору важно, чтобы менеджеры не теряли сделки, а скорость закрытия этапов воронки выросла.
+                        Коммерческому директору важно, чтобы менеджеры не теряли сделки, а скорость прохождения воронки продаж выросла.
                     </p>
                     <div class="p-3 rounded-lg bg-slate-950/60 border border-slate-800 text-xs text-slate-300 italic">
-                        «...помогает менеджерам закрывать сделки на 25-30% быстрее за счет AI-подсказок в реальном времени.»
+                        «...помогает менеджерам закрывать сделки на 25-30% быстрее за счет устранения рутины и точных подсказок.»
                     </div>
                 </div>
 
@@ -388,12 +388,12 @@
                         <span class="px-3 py-1 rounded-full bg-purple-500/10 text-purple-400 text-xs font-bold border border-purple-500/20">CTO / IT-Директор</span>
                         <i class="bi bi-shield-lock-fill text-xl text-slate-500"></i>
                     </div>
-                    <h4 class="text-lg font-bold text-white mb-2">Фокус на Безопасность и API</h4>
+                    <h4 class="text-lg font-bold text-white mb-2">Фокус на надежность и интеграцию</h4>
                     <p class="text-slate-400 text-xs leading-relaxed mb-4">
-                        Техническому директору важна простота интеграции, скорость развертывания и защита корпоративных данных.
+                        Техническому директору важна простота внедрения, совместимость с текущей инфраструктурой и защита корпоративных данных.
                     </p>
                     <div class="p-3 rounded-lg bg-slate-950/60 border border-slate-800 text-xs text-slate-300 italic">
-                        «...поддерживает On-Premise развертывание, готовые REST API коннекторы и сквозное шифрование.»
+                        «...поддерживает быструю интеграцию по API, сквозную безопасность и бесшовную работу с вашим стеком.»
                     </div>
                 </div>
 
@@ -406,40 +406,34 @@
     <section id="integrations" class="py-24 border-t border-slate-800/80 bg-[#080a11]">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
             
-            <span class="text-xs font-bold font-mono tracking-widest text-indigo-400 uppercase">Ecosystem</span>
-            <h2 class="text-3xl sm:text-5xl font-extrabold text-white mt-3 mb-6">Бесшовная экосистема интеграций</h2>
-            <p class="text-slate-400 text-base max-w-2xl mx-auto mb-16">Подключайтесь к существующему стеку продаж за пару минут без сложной технической настройки.</p>
+            <span class="text-xs font-bold font-mono tracking-widest text-indigo-400 uppercase">Экосистема</span>
+            <h2 class="text-3xl sm:text-5xl font-extrabold text-white mt-3 mb-6">Бесшовная интеграция в ваш стек продаж</h2>
+            <p class="text-slate-400 text-base max-w-2xl mx-auto mb-16">Подключайтесь к существующим процессам отдела продаж за пару минут без сложной технической настройки.</p>
 
-            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-6 max-w-4xl mx-auto">
                 
-                <div class="p-5 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col items-center justify-center gap-2">
-                    <i class="bi bi-cpu-fill text-2xl text-rose-400"></i>
-                    <span class="text-xs font-bold text-white">HeadHunter API</span>
+                <div class="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 flex flex-col items-center justify-center gap-3">
+                    <i class="bi bi-layers-fill text-3xl text-amber-400"></i>
+                    <span class="text-sm font-bold text-white">amoCRM</span>
+                    <span class="text-xs text-slate-400">Авто-создание сделок</span>
                 </div>
 
-                <div class="p-5 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col items-center justify-center gap-2">
-                    <i class="bi bi-building-check text-2xl text-sky-400"></i>
-                    <span class="text-xs font-bold text-white">DaData API</span>
+                <div class="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 flex flex-col items-center justify-center gap-3">
+                    <i class="bi bi-boxes text-3xl text-cyan-400"></i>
+                    <span class="text-sm font-bold text-white">Битрикс24</span>
+                    <span class="text-xs text-slate-400">Синхронизация контактов</span>
                 </div>
 
-                <div class="p-5 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col items-center justify-center gap-2">
-                    <i class="bi bi-stars text-2xl text-indigo-400"></i>
-                    <span class="text-xs font-bold text-white">Gemini Flash</span>
+                <div class="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 flex flex-col items-center justify-center gap-3">
+                    <i class="bi bi-telegram text-3xl text-blue-400"></i>
+                    <span class="text-sm font-bold text-white">Telegram</span>
+                    <span class="text-xs text-slate-400">Быстрый первый контакт</span>
                 </div>
 
-                <div class="p-5 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col items-center justify-center gap-2">
-                    <i class="bi bi-layers-fill text-2xl text-amber-400"></i>
-                    <span class="text-xs font-bold text-white">amoCRM</span>
-                </div>
-
-                <div class="p-5 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col items-center justify-center gap-2">
-                    <i class="bi bi-boxes text-2xl text-cyan-400"></i>
-                    <span class="text-xs font-bold text-white">Битрикс24</span>
-                </div>
-
-                <div class="p-5 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col items-center justify-center gap-2">
-                    <i class="bi bi-telegram text-2xl text-blue-400"></i>
-                    <span class="text-xs font-bold text-white">Telegram B2B</span>
+                <div class="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 flex flex-col items-center justify-center gap-3">
+                    <i class="bi bi-file-earmark-spreadsheet-fill text-3xl text-emerald-400"></i>
+                    <span class="text-sm font-bold text-white">Excel / CSV</span>
+                    <span class="text-xs text-slate-400">Экспорт базы в 1 клик</span>
                 </div>
 
             </div>
@@ -447,30 +441,30 @@
         </div>
     </section>
 
-    <!-- СЕКЦИЯ: БЕЗОПАСНОСТЬ И ДОВЕРИЕ (ДЛЯ МОДЕРАЦИИ HH.RU И 152-ФЗ) -->
+    <!-- СЕКЦИЯ: БЕЗОПАСНОСТЬ И ДОВЕРИЕ -->
     <section id="security" class="py-20 border-t border-slate-800/80 bg-[#06080e]">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="rounded-3xl bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-slate-800 p-8 sm:p-12">
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
                     <div>
                         <span class="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-xs font-bold border border-emerald-500/20 mb-4 inline-block">
-                            <i class="bi bi-shield-check me-1"></i> Соответствие 152-ФЗ и OpenAPI
+                            <i class="bi bi-shield-check me-1"></i> Соответствие 152-ФЗ и безопасность
                         </span>
-                        <h3 class="text-2xl sm:text-3xl font-bold text-white mb-4">Безопасность данных и официальные API-стандарты</h3>
+                        <h3 class="text-2xl sm:text-3xl font-bold text-white mb-4">Безопасность данных и официальные стандарты</h3>
                         <p class="text-slate-400 text-sm leading-relaxed mb-6">
-                            Сервис работает исключительно с легальными открытыми источниками данных (ЕГРЮЛ, реестры юридических лиц, авторизованные протоколы OAuth 2.0 HeadHunter) в строгом соответствии с законодательством РФ.
+                            Сервис работает исключительно с легальными открытыми источниками и официальными протоколами интеграции в строгом соответствии с законодательством РФ.
                         </p>
                         <div class="space-y-2 text-xs text-slate-300">
-                            <div class="flex items-center gap-2"><i class="bi bi-check-circle-fill text-indigo-400"></i> Авторизация по защищенному протоколу OAuth 2.0</div>
-                            <div class="flex items-center gap-2"><i class="bi bi-check-circle-fill text-indigo-400"></i> Шифрование всех передаваемых реквизитов (TLS 1.3)</div>
-                            <div class="flex items-center gap-2"><i class="bi bi-check-circle-fill text-indigo-400"></i> Локальное хранение баз данных на серверах в РФ</div>
+                            <div class="flex items-center gap-2"><i class="bi bi-check-circle-fill text-indigo-400"></i> Работа через защищенные протоколы обмена данными</div>
+                            <div class="flex items-center gap-2"><i class="bi bi-check-circle-fill text-indigo-400"></i> Сквозное шифрование всех передаваемых реквизитов (TLS 1.3)</div>
+                            <div class="flex items-center gap-2"><i class="bi bi-check-circle-fill text-indigo-400"></i> Надежное хранение баз данных на серверах в РФ</div>
                         </div>
                     </div>
                     <div class="flex justify-center">
                         <div class="w-full max-w-sm p-6 rounded-2xl bg-slate-950/80 border border-slate-800/80 text-center">
                             <i class="bi bi-patch-check-fill text-5xl text-indigo-400 mb-3 block"></i>
-                            <h4 class="text-base font-bold text-white mb-1">Готовы протестировать AI Copilot?</h4>
-                            <p class="text-xs text-slate-400 mb-5">Запустите генерацию первых лидов прямо сейчас в интерактивном интерфейсе.</p>
+                            <h4 class="text-base font-bold text-white mb-1">Готовы протестировать сервис?</h4>
+                            <p class="text-xs text-slate-400 mb-5">Запустите поиск целевых клиентов и сформируйте первые питчи прямо сейчас.</p>
                             <a href="/app" class="w-full block py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm transition shadow-lg shadow-indigo-600/30">
                                 Открыть рабочий сервис
                             </a>

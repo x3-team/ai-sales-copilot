@@ -647,7 +647,7 @@ def get_demo_ui():
             </div>
             <div class="d-flex align-items-center gap-2">
                 <span class="badge badge-gemini px-3 py-2 rounded-pill fw-semibold">
-                    <i class="bi bi-stars me-1 text-primary"></i> Gemini Flash Enabled
+                    <i class="bi bi-stars me-1 text-primary"></i> AI Engine Active
                 </span>
                 <button class="btn btn-outline-light btn-sm fw-semibold" data-bs-toggle="modal" data-bs-target="#websiteAnalyzeModal">
                     <i class="bi bi-globe me-1"></i> Анализ нашего сайта
@@ -700,7 +700,7 @@ def get_demo_ui():
                             <h5 class="fw-bold mb-1 text-dark">
                                 <i class="bi bi-cpu text-primary me-2"></i> Автономный поиск целевых клиентов для вашего оффера
                             </h5>
-                            <p class="text-muted small mb-0">Система находит компании с открытыми вакансиями на hh.ru, сопоставляет с базой ЛПР («Сетка») и генерирует персональные питчи через <strong>Gemini Flash</strong>.</p>
+                            <p class="text-muted small mb-0">Система находит компании с активной потребностью в вашем продукте, определяет лиц, принимающих решения, и готовит персональные питчи.</p>
                         </div>
                         <button onclick="downloadLeadsCsv()" class="btn btn-outline-success btn-sm fw-semibold d-flex align-items-center gap-1">
                             <i class="bi bi-file-earmark-spreadsheet"></i> Экспорт базы в CSV (Excel)
@@ -721,8 +721,8 @@ def get_demo_ui():
 
                 <div id="autoProspectLoader" class="text-center py-5 d-none">
                     <div class="spinner-border text-primary" style="width: 3.5rem; height: 3.5rem;" role="status"></div>
-                    <h5 class="fw-semibold mt-3 text-dark">AI Сканер просеивает рынок & Gemini генерирует питчи...</h5>
-                    <p class="text-muted">Анализ вакансий hh.ru & Профилирование ЛПР в "Сетке"</p>
+                    <h5 class="fw-semibold mt-3 text-dark">AI Сканер ищет целевые компании и формирует питчи...</h5>
+                    <p class="text-muted">Анализ сигналов спроса & Определение профилей ЛПР</p>
                 </div>
 
                 <div id="autoProspectResults" class="vstack gap-3 d-none"></div>
@@ -748,7 +748,7 @@ def get_demo_ui():
 
                 <div id="loader" class="text-center py-5 d-none">
                     <div class="spinner-border text-primary" style="width: 3.5rem; height: 3.5rem;" role="status"></div>
-                    <h5 class="fw-semibold mt-3 text-dark">Загрузка данных из DaData & Генерация питчей...</h5>
+                    <h5 class="fw-semibold mt-3 text-dark">Анализ профиля компании & Генерация питчей...</h5>
                 </div>
 
                 <div id="resultsContent" class="d-none">
@@ -946,7 +946,7 @@ def get_demo_ui():
                     card.innerHTML = `
                         <div class="d-flex justify-content-between align-items-start mb-2">
                             <div>
-                                <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-20 mb-2 fw-bold"><i class="bi bi-check2-circle me-1"></i> Сигнал найма hh.ru</span>
+                                <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-20 mb-2 fw-bold"><i class="bi bi-check2-circle me-1"></i> Подтвержденный сигнал потребности</span>
                                 <h4 class="fw-bold text-dark mb-1">${comp.company_name}</h4>
                                 <div class="text-muted small">ИНН: ${comp.inn} • Штат: ~${comp.employee_count} чел. • Выручка: ${comp.revenue}</div>
                             </div>
@@ -955,7 +955,7 @@ def get_demo_ui():
                         <p class="text-dark small mb-2"><strong>Триггер потребности:</strong> ${comp.match_reason}</p>
                         <div class="mb-3"><strong>Карта ЛПР:</strong> ${lprsHtml}</div>
                         <div class="p-3 bg-light rounded-3 border-start border-3 border-primary">
-                            <div class="fw-bold text-primary small mb-1"><i class="bi bi-stars me-1"></i> Сгенерированный питч (Gemini Flash):</div>
+                            <div class="fw-bold text-primary small mb-1"><i class="bi bi-stars me-1"></i> Персонализированный питч под ЛПР:</div>
                             <div class="small text-dark lh-base">${p.ai_pitch_preview}</div>
                         </div>
                     `;
