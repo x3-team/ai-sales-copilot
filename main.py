@@ -1,10 +1,11 @@
 import os
 import json
 import requests
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Optional, List
 
 app = FastAPI(title="AI Sales Copilot Interactive Prototype")
 
@@ -18,6 +19,29 @@ app.add_middleware(
 
 DADATA_API_KEY = os.environ.get("DADATA_API_KEY", "")
 DADATA_SECRET_KEY = os.environ.get("DADATA_SECRET_KEY", "")
+
+# --------------------------------------------------------------------------
+# 0. COMPANY PRODUCT PROFILE (Настройка продукта продавца)
+# --------------------------------------------------------------------------
+
+class SellerProductProfile(BaseModel):
+    product_name: str = "AI Sales Copilot"
+    product_description: str = "Автоматизация продаж и голосовой AI-ассистент для B2B клиентов"
+    target_icp: str = "Компания с B2B отделом продаж от 5 человек, использующая CRM"
+    value_proposition: str = "Сокращает рутину менеджеров, подсказывает идеальный скрипт во время разговора и поднимает конверсию сделок на 25-30%"
+
+# Профиль по умолчанию
+current_seller_profile = SellerProductProfile()
+
+@app.get("/api/seller/profile")
+def get_seller_profile():
+    return current_seller_profile
+
+@app.post("/api/seller/profile")
+def update_seller_profile(profile: SellerProductProfile):
+    global current_seller_profile
+    current_seller_profile = profile
+    return {"status": "success", "profile": current_seller_profile}
 
 # --------------------------------------------------------------------------
 # 1. REAL DADATA INTEGRATION
@@ -108,9 +132,6 @@ STATIC_MOCK_VACANCIES = {
 }
 
 def generate_dynamic_hh_vacancies(inn: str, company_name: str):
-    """
-    Генерирует динамический набор вакансий для любой компании, если её нет в статической базе.
-    """
     if inn in STATIC_MOCK_VACANCIES:
         return STATIC_MOCK_VACANCIES[inn]
     
@@ -144,7 +165,7 @@ def generate_dynamic_hh_vacancies(inn: str, company_name: str):
     ]
 
 # --------------------------------------------------------------------------
-# 3. AI SALES COPILOT ENRICHMENT API
+# 3. AI SALES COPILOT ENRICHMENT API WITH SELLER CONTEXT
 # --------------------------------------------------------------------------
 
 class CRMDealRequest(BaseModel):
@@ -157,7 +178,7 @@ class CRMDealRequest(BaseModel):
 @app.get("/api/copilot/enrich-company")
 def enrich_company_profile(inn: str = Query(..., description="ИНН компании")):
     """
-    Агрегирует реальные данные DaData и имитацию hh.ru, формирует AI-рекомендации.
+    Агрегирует реальные данные DaData и имитацию hh.ru, учитывая профиль продукта вашей компании.
     """
     dadata_res = search_company(query=inn)
     
@@ -200,23 +221,29 @@ def enrich_company_profile(inn: str = Query(..., description="ИНН компа�
         emp = company_info["employee_count"]
         if emp > 500:
             score += 15
-            pain_points.append(f"Крупный штат ({emp} сотрудников) — высокая нагрузка на отдел продаж и коммуникации.")
+            pain_points.append(f"Крупный штат ({emp} сотрудников) — высокая нагрузка на коммуникации и процессы.")
         elif emp > 50:
             score += 10
-            pain_points.append(f"Средний бизнес ({emp} сотрудников) — этап активного масштабирования процессов.")
+            pain_points.append(f"Средний бизнес ({emp} сотрудников) — этап активного масштабирования.")
             
     if len(vacancies) > 0:
         score += 15
-        pain_points.append(f"Открыто {len(vacancies)} ключевых вакансий на hh.ru — компания инвестирует в расширение команды.")
+        pain_points.append(f"Открыто {len(vacancies)} ключевых вакансий на hh.ru — компания активно расширяется.")
         
+    # Динамический Pitch на основе профиля вашего продукта!
+    prod_name = current_seller_profile.product_name
+    prod_value = current_seller_profile.value_proposition
+    
     pitch = (
         f"Здравствуйте, {company_info['ceo']}! Мы проанализировали текущую активность компании «{company_info['name']}». "
-        f"Видим, что вы нанимаете специалистов в отдел продаж и развитие бизнеса. "
-        f"Наш AI Sales Copilot интегрируется в вашу CRM и помогает автоматизировать рутину менеджеров, "
-        f"подсказывая скрипты прямо во время звонка и повышая конверсию сделок на 25-30%."
+        f"По данным найма на hh.ru у вас открыты вакансии в ключевых отделах. "
+        f"Наша компания предлагает решение «{prod_name}» ({current_seller_profile.product_description}). "
+        f"Для вашей команды это даст следующий результат: {prod_value}. "
+        f"Подскажите, когда вам удобно провести короткую 15-минутную демо-презентацию?"
     )
     
     return {
+        "seller_product_profile": current_seller_profile,
         "dadata_legal_profile": company_info,
         "hh_recruitment_profile": {
             "open_vacancies_count": len(vacancies),
@@ -227,18 +254,15 @@ def enrich_company_profile(inn: str = Query(..., description="ИНН компа�
             "recommended_pitch": pitch,
             "insights": pain_points,
             "next_steps": [
-                "1. Отправить персональное КП на email HR/Руководителю",
-                "2. Запланировать вводную демо-презентацию AI Copilot",
-                "3. Назначить встреча со ЛПР (Лицом, Принимающим Решения)"
+                f"1. Отправить коммерческое предложение по решению «{prod_name}»",
+                "2. Назначить 15-минутный онлайн-звонок с ЛПР / Руководителем",
+                "3. Внести контакт HR/Руководителя в CRM-систему"
             ]
         }
     }
 
 @app.post("/api/crm/create-deal")
 def create_crm_deal(deal: CRMDealRequest):
-    """
-    Имитация создания сделки в CRM (amoCRM / Битрикс24)
-    """
     return {
         "status": "success",
         "deal_id": f"DEAL-2026-{os.urandom(2).hex().upper()}",
@@ -247,7 +271,7 @@ def create_crm_deal(deal: CRMDealRequest):
     }
 
 # --------------------------------------------------------------------------
-# 4. FRONTEND INTERACTIVE PROTOTYPE (Bootstrap 5 + Modern UI)
+# 4. FRONTEND INTERACTIVE PROTOTYPE (С модальным окном настройки Вашей Компании)
 # --------------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
@@ -264,10 +288,6 @@ def get_demo_ui():
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
 
     <style>
-        :root {
-            --bs-primary-rgb: 13, 110, 253;
-            --card-radius: 16px;
-        }
         body {
             background-color: #f3f5f9;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -280,7 +300,7 @@ def get_demo_ui():
         }
         .card-custom {
             border: 1px solid rgba(0,0,0,0.06);
-            border-radius: var(--card-radius);
+            border-radius: 16px;
             box-shadow: 0 6px 16px rgba(0,0,0,0.03);
             background: #ffffff;
             transition: transform 0.2s ease, box-shadow 0.2s ease;
@@ -326,6 +346,12 @@ def get_demo_ui():
             background: #ffffff;
             margin-bottom: 0.75rem;
         }
+        .seller-badge-bar {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 0.75rem 1.25rem;
+        }
     </style>
 </head>
 <body>
@@ -340,6 +366,9 @@ def get_demo_ui():
                 AI Sales Copilot
             </a>
             <div class="d-flex align-items-center gap-2">
+                <button class="btn btn-outline-light btn-sm fw-semibold" data-bs-toggle="modal" data-bs-target="#sellerProfileModal">
+                    <i class="bi bi-gear-fill me-1"></i> Настроить мой продукт / оффер
+                </button>
                 <span class="badge bg-success bg-opacity-20 text-success px-3 py-2 rounded-pill border border-success border-opacity-20">
                     <i class="bi bi-broadcast me-1"></i> Live Prototype
                 </span>
@@ -349,6 +378,19 @@ def get_demo_ui():
 
     <div class="container mb-5">
         
+        <!-- Информационная плашка активного продукта -->
+        <div class="seller-badge-bar mb-4 d-flex justify-content-between align-items-center flex-wrap gap-2 shadow-sm">
+            <div>
+                <span class="text-muted small fw-semibold">Продукт вашей компании:</span>
+                <span class="fw-bold text-dark ms-1" id="currentProdName">AI Sales Copilot</span>
+                <span class="text-muted mx-2">•</span>
+                <span class="text-muted small" id="currentProdDesc">Автоматизация продаж и B2B AI-ассистент</span>
+            </div>
+            <button class="btn btn-sm btn-link text-decoration-none p-0 text-primary fw-semibold" data-bs-toggle="modal" data-bs-target="#sellerProfileModal">
+                <i class="bi bi-pencil-square me-1"></i> Изменить оффер
+            </button>
+        </div>
+
         <!-- Панель поиска -->
         <div class="card card-custom p-4 mb-4">
             <h5 class="fw-bold mb-3 text-dark">
@@ -358,7 +400,7 @@ def get_demo_ui():
                 <div class="col-md-8">
                     <div class="input-group input-group-lg">
                         <span class="input-group-text bg-white text-muted border-end-0"><i class="bi bi-building"></i></span>
-                        <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Введите ИНН или название компании..." value="7707083893">
+                        <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Введите ИНН потенциального клиента или название..." value="7707083893">
                     </div>
                 </div>
                 <div class="col-md-4">
@@ -369,7 +411,7 @@ def get_demo_ui():
             </div>
             
             <div class="d-flex align-items-center gap-2 mt-3 text-muted small">
-                <span class="fw-semibold">Быстрые примеры:</span>
+                <span class="fw-semibold">Быстрые примеры ИНН клиентов:</span>
                 <button class="btn btn-sm btn-outline-secondary rounded-pill py-0 px-2" onclick="setQuery('7707083893')">Сбербанк</button>
                 <button class="btn btn-sm btn-outline-secondary rounded-pill py-0 px-2" onclick="setQuery('7702070139')">Яндекс</button>
                 <button class="btn btn-sm btn-outline-secondary rounded-pill py-0 px-2" onclick="setQuery('7710353606')">Т-Банк</button>
@@ -380,7 +422,7 @@ def get_demo_ui():
         <!-- Прелоадер -->
         <div id="loader" class="text-center py-5 d-none">
             <div class="spinner-border text-primary" style="width: 3.5rem; height: 3.5rem;" role="status"></div>
-            <h5 class="fw-semibold mt-3 text-dark">AI Копилот собирает данные...</h5>
+            <h5 class="fw-semibold mt-3 text-dark">AI Копилот скрещивает данные клиента с вашим оффером...</h5>
             <p class="text-muted">Запрос юридических реквизитов DaData & Анализ вакансий hh.ru</p>
         </div>
 
@@ -407,7 +449,7 @@ def get_demo_ui():
                 <!-- Рекомендуемый скрипт -->
                 <div class="pitch-box mb-3">
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="fw-bold text-primary"><i class="bi bi-chat-left-text-fill me-2"></i>Сгенерированный Pitch для первого звонка:</span>
+                        <span class="fw-bold text-primary"><i class="bi bi-chat-left-text-fill me-2"></i>Сгенерированный Pitch под ваш продукт:</span>
                         <button class="btn btn-sm btn-outline-primary" onclick="copyPitch()"><i class="bi bi-copy me-1"></i> Скопировать</button>
                     </div>
                     <p class="mb-0 text-dark fs-6 lh-base" id="pitchText"></p>
@@ -509,6 +551,40 @@ def get_demo_ui():
 
     </div>
 
+    <!-- Модальное окно настройки Продукта Вашей Компании -->
+    <div class="modal fade" id="sellerProfileModal" tabindex="-1" aria-labelledby="sellerProfileModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content border-0 shadow">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title fw-bold" id="sellerProfileModalLabel"><i class="bi bi-sliders me-2"></i>Профиль вашей компании (Seller Profile)</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <p class="text-muted small mb-3">Укажите, какой продукт или услугу вы продаете. AI Copilot будет использовать эти данные для адаптации питча под любого найденного B2B-клиента.</p>
+                    
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Название вашего продукта / решения:</label>
+                        <input type="text" id="sellerProductName" class="form-control" placeholder="например: AI Sales Copilot, Bitrix24, Логистический софт...">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Краткое описание вашей деятельности:</label>
+                        <input type="text" id="sellerProductDesc" class="form-control" placeholder="чем занимается ваша компания...">
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Ценность для клиента (Value Proposition):</label>
+                        <textarea id="sellerValueProp" class="form-control" rows="3" placeholder="какой результат получит клиент после покупки вашего продукта..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="button" onclick="saveSellerProfile()" class="btn btn-primary fw-semibold"><i class="bi bi-check-lg me-1"></i> Сохранить настройки</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Уведомления Toast -->
     <div class="toast-container position-fixed bottom-0 end-0 p-3">
         <div id="liveToast" class="toast text-bg-dark border-0 shadow" role="alert" aria-live="assertive" aria-atomic="true">
@@ -522,6 +598,51 @@ def get_demo_ui():
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         let currentEnrichedData = null;
+
+        async function loadSellerProfile() {
+            try {
+                const res = await fetch('/api/seller/profile');
+                const data = await res.json();
+                document.getElementById('sellerProductName').value = data.product_name;
+                document.getElementById('sellerProductDesc').value = data.product_description;
+                document.getElementById('sellerValueProp').value = data.value_proposition;
+
+                document.getElementById('currentProdName').innerText = data.product_name;
+                document.getElementById('currentProdDesc').innerText = data.product_description;
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function saveSellerProfile() {
+            const payload = {
+                product_name: document.getElementById('sellerProductName').value,
+                product_description: document.getElementById('sellerProductDesc').value,
+                target_icp: "B2B компании",
+                value_proposition: document.getElementById('sellerValueProp').value
+            };
+
+            try {
+                await fetch('/api/seller/profile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const modal = bootstrap.Modal.getInstance(document.getElementById('sellerProfileModal'));
+                modal.hide();
+
+                await loadSellerProfile();
+                showToast('Профиль вашей компании успешно сохранен!');
+
+                // Пересчитать данные если клиент открыт
+                if (document.getElementById('searchInput').value) {
+                    runCopilotEnrichment();
+                }
+            } catch (e) {
+                alert('Ошибка сохранения: ' + e);
+            }
+        }
 
         function setQuery(inn) {
             document.getElementById('searchInput').value = inn;
@@ -662,7 +783,10 @@ def get_demo_ui():
             }
         }
 
-        window.onload = runCopilotEnrichment;
+        window.onload = function() {
+            loadSellerProfile();
+            runCopilotEnrichment();
+        };
     </script>
 </body>
 </html>
