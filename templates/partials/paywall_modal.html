@@ -1,0 +1,35 @@
+<!-- Paywall modal — Figma: App / Paywall -->
+<div id="paywallModal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-black/75 backdrop-blur-sm p-4" onclick="if(event.target===this) closePaywall()">
+    <div class="card w-full max-w-[440px] p-6 relative">
+        <button type="button" onclick="closePaywall()" class="absolute top-4 right-4 text-ink-mute hover:text-ink transition text-[20px] leading-none" aria-label="Закрыть">×</button>
+
+        <span class="chip chip-mint mb-4">Первые 5 компаний бесплатно</span>
+        <h3 class="text-[22px] font-semibold tracking-tight mb-2">Разблокировать контакты</h3>
+        <p class="text-[14px] text-ink-dim leading-relaxed mb-5">
+            Карта власти и сигналы спроса уже открыты. Оплата — только за проверенные контакты и питчи под каждую роль.
+        </p>
+
+        <ul class="space-y-2.5 text-[13px] text-ink-dim mb-6">
+            <li class="flex gap-2"><span class="text-mint shrink-0">✓</span> Email с MX-проверкой</li>
+            <li class="flex gap-2"><span class="text-mint shrink-0">✓</span> Телефоны и Telegram</li>
+            <li class="flex gap-2"><span class="text-mint shrink-0">✓</span> Питчи под все 4 роли</li>
+            <li class="flex gap-2"><span class="text-mint shrink-0">✓</span> Экспорт в CSV</li>
+        </ul>
+
+        <div class="rounded-[14px] bg-mint-bg border border-edge-accent p-4 mb-5">
+            <div class="flex items-baseline justify-between gap-3">
+                <div>
+                    <div class="mono text-[10px] uppercase tracking-[.12em] text-ink-mute mb-1">Тариф «Рабочий»</div>
+                    <div class="text-[28px] font-bold tracking-tight">6 900 ₽<span class="text-[14px] font-normal text-ink-mute">/мес</span></div>
+                </div>
+                <span class="chip chip-mint">200 компаний</span>
+            </div>
+        </div>
+
+        <div class="flex flex-col gap-2.5">
+            <button type="button" onclick="unlockDemoPaywall()" class="btn btn-primary w-full">Открыть доступ</button>
+            <a href="/#pricing" class="btn btn-ghost w-full text-center">Сравнить тарифы</a>
+        </div>
+        <p class="mono text-[10px] text-ink-mute text-center mt-4">Оплата подключится на следующем этапе · сейчас демо-режим</p>
+    </div>
+</div>

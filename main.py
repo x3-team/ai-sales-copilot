@@ -21,7 +21,7 @@ except ImportError:
 
 import demo_mode
 
-app = FastAPI(title="AI Sales Copilot Production Pilot")
+app = FastAPI(title="Sales Copilot")
 
 app.add_middleware(
     CORSMiddleware,
