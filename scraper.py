@@ -151,11 +151,11 @@ class ProfileDorkResolver:
             "exclude_fragments": ("jobs", "company", "pulse", "learning"),
         },
         "setka": {
-            "site": "setka.ru",
+            "site": "setka.ru/users",
             "profile_re": re.compile(
-                r"^https?://(?:www\.)?setka\.ru/(?!search|auth|posts|media)([a-zA-Z][a-zA-Z0-9_-]*)"
+                r"^https?://(?:www\.)?setka\.ru/users/[0-9a-f-]{36}"
             ),
-            "exclude_fragments": ("search", "auth", "posts", "media"),
+            "exclude_fragments": ("search", "auth", "posts", "media", "login", "feed", "channels", "accounts", "tags"),
         },
         "hh": {
             "site": "hh.ru/resume",
@@ -200,6 +200,8 @@ class ProfileDorkResolver:
         queries = [
             f"site:tenchat.ru {company} директор",
             f"site:tenchat.ru {company}",
+            f"site:setka.ru {company}",
+            f"site:setka.ru {company} директор",
         ]
         product = (product_domain or company).lower()
         if "1с" in product or "1c" in product:
@@ -207,12 +209,19 @@ class ProfileDorkResolver:
                 "site:tenchat.ru 1с директор",
                 "site:tenchat.ru 1с финансовый директор",
                 "site:tenchat.ru 1с архитектор",
+                f"site:setka.ru {company} 1с",
+                "site:setka.ru 1с архитектор",
             ])
 
         pooled: List[Dict] = []
         seen = set()
         for q in queries:
             for item in cls._search_bing(q):
+                url_key = item["url"].split("?")[0].rstrip("/")
+                if url_key not in seen:
+                    seen.add(url_key)
+                    pooled.append(item)
+            for item in cls._search_duckduckgo(q):
                 url_key = item["url"].split("?")[0].rstrip("/")
                 if url_key not in seen:
                     seen.add(url_key)
@@ -227,7 +236,7 @@ class ProfileDorkResolver:
         domain_map = {
             "tenchat": "tenchat.ru",
             "linkedin": "linkedin.com/in",
-            "setka": "setka.ru",
+            "setka": "setka.ru/users",
             "hh": "hh.ru/resume",
         }
         needle = domain_map.get(platform, "")
@@ -476,6 +485,8 @@ class ProfileDorkResolver:
             score += 10
         if platform == "tenchat" and re.search(r"tenchat\.ru/[a-z0-9_-]+$", url.split("?")[0]):
             score += 10
+        if platform == "setka" and re.search(r"setka\.ru/users/[0-9a-f-]{36}", url.split("?")[0]):
+            score += 10
 
         return score
 
@@ -493,11 +504,11 @@ class ProfileDorkResolver:
         """
         if platforms is None:
             if stakeholder_type in ("ceo", "lpr"):
-                platforms = ["tenchat", "linkedin"]
+                platforms = ["tenchat", "setka", "linkedin"]
             elif stakeholder_type == "lvr":
-                platforms = ["tenchat", "hh", "linkedin"]
+                platforms = ["setka", "tenchat", "hh", "linkedin"]
             else:
-                platforms = ["tenchat", "linkedin", "hh"]
+                platforms = ["setka", "tenchat", "linkedin", "hh"]
 
         best_match = None
         best_score = 0

@@ -341,7 +341,7 @@ def auto_prospect_clients(product_keyword: str = Query("1С", description="Кл�
         "search_query": product_keyword,
         "active_seller_product": current_seller_profile.product_name,
         "found_count": len(prospects),
-        "live_signals_source": "Identity Layer: DaData + HH + Habr + сайт + TenChat verify (BYOS optional)",
+        "live_signals_source": "Identity Layer: DaData + HH + Habr + сайт + TenChat/Setka verify (BYOS optional)",
         "prospects": prospects
     }
 
@@ -446,6 +446,11 @@ def copilot_sources_status():
                 "available": True,
                 "label": "TenChat (публичный)",
                 "detail": "Slug probe + verify без cookies",
+            },
+            "setka_public": {
+                "available": True,
+                "label": "Сетка (публичный)",
+                "detail": "Dork → пост → автор /users/{uuid} + verify",
             },
         },
         "optional": {
@@ -1124,7 +1129,7 @@ TENCHAT_REFRESH_TOKEN=ваш_refresh_токен</pre>
 
         function getProfileLink(person) {
             const c = person.contacts || {};
-            return person.profile_url || c.search_link_tenchat || c.search_link_linkedin || '#';
+            return person.profile_url || c.search_link_tenchat || c.search_link_setka || c.search_link_linkedin || '#';
         }
 
         function getProfileBadge(person) {

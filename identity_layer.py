@@ -54,6 +54,34 @@ class ProfileVerifier:
         return {"name": "", "role": clean, "company": ""}
 
     @classmethod
+    def parse_setka_profile(cls, url: str) -> Dict:
+        result = {
+            "url": url, "platform": "setka", "name": "", "role": "",
+            "company": "", "raw_title": "", "description": "",
+        }
+        try:
+            resp = requests.get(url, headers=cls.HEADERS, timeout=8)
+            if resp.status_code != 200:
+                return result
+            soup = BeautifulSoup(resp.text, "html.parser")
+            og = soup.find("meta", property="og:title")
+            desc = soup.find("meta", property="og:description") or soup.find("meta", attrs={"name": "description"})
+            title = og["content"].strip() if og and og.get("content") else ""
+            result["raw_title"] = title
+            result["description"] = desc["content"].strip() if desc and desc.get("content") else ""
+            if title:
+                result["name"] = title.split("—")[0].strip()
+            for line in soup.get_text("\n", strip=True).split("\n"):
+                if result["name"] and result["name"].split()[0] in line and "—" in line:
+                    result["role"] = line.split("—", 1)[1].strip()[:120]
+                    break
+            if not result["role"] and result["description"]:
+                result["role"] = result["description"].split(".")[0][:120]
+        except Exception:
+            pass
+        return result
+
+    @classmethod
     def company_match_score(cls, text: str, company_name: str, inn: str = "") -> int:
         if not text or not company_name:
             return 0
@@ -538,6 +566,148 @@ class TenChatCompanyParser:
         return found
 
 
+class SetkaCompanyParser:
+    """Поиск ЛПР/ЛВР в Сетке (setka.ru): dork → пост → автор → verify профиля."""
+
+    HEADERS = ProfileVerifier.HEADERS
+
+    @classmethod
+    def discover(cls, company_name: str, inn: str = "", product_domain: str = "") -> List[Dict]:
+        try:
+            return cls._discover_via_dork(company_name, inn, product_domain)
+        except Exception:
+            return []
+
+    @classmethod
+    def _discover_via_dork(cls, company_name: str, inn: str, product_domain: str) -> List[Dict]:
+        from scraper import ProfileDorkResolver
+        import time
+
+        clean = IdentityLayer._clean_company_name(company_name)
+        queries = [
+            f"site:setka.ru {clean}",
+            f"site:setka.ru {clean} директор",
+            f"site:setka.ru {clean} HR",
+        ]
+        product = (product_domain or clean).lower()
+        if "1с" in product or "1c" in product:
+            queries.extend([
+                f"site:setka.ru {clean} 1с",
+                f"site:setka.ru 1с {clean}",
+                f"site:setka.ru {clean} архитектор",
+            ])
+
+        found: List[Dict] = []
+        seen_urls: set = set()
+        for q in queries:
+            results = ProfileDorkResolver._search_bing(q)
+            if not results:
+                results = ProfileDorkResolver._search_duckduckgo(q)
+            if not results:
+                results = ProfileDorkResolver._search_yandex(q)
+            for item in results:
+                url = item.get("url", "").split("?")[0]
+                if "setka.ru/posts/" in url:
+                    for cand in cls._profile_from_post(url, company_name, inn):
+                        key = cand.get("profile_url")
+                        if key and key not in seen_urls:
+                            seen_urls.add(key)
+                            found.append(cand)
+                elif ProfileDorkResolver._is_valid_profile_url(url, "setka"):
+                    cand = cls._profile_from_url(
+                        url, company_name, inn,
+                        context_blob=f"{item.get('title', '')} {item.get('snippet', '')}",
+                    )
+                    if cand and cand.get("profile_url") not in seen_urls:
+                        seen_urls.add(cand["profile_url"])
+                        found.append(cand)
+            time.sleep(0.3)
+        return found
+
+    @classmethod
+    def _company_mentioned(cls, html_blob: str, company_name: str, inn: str = "") -> bool:
+        blob = html_blob.lower()
+        clean = IdentityLayer._clean_company_name(company_name).lower()
+        if inn and inn in blob:
+            return True
+        if clean and len(clean) >= 4 and clean[:4] in blob:
+            return True
+        return any(len(t) > 3 and t in blob for t in clean.split())
+
+    @classmethod
+    def _profile_from_post(cls, post_url: str, company_name: str, inn: str) -> List[Dict]:
+        try:
+            resp = requests.get(post_url, headers=cls.HEADERS, timeout=8)
+            if resp.status_code != 200:
+                return []
+            if not cls._company_mentioned(resp.text, company_name, inn):
+                return []
+            soup = BeautifulSoup(resp.text, "html.parser")
+            author = soup.find(itemprop="author")
+            if not author:
+                return []
+            a = author.find("a", href=True)
+            if not a or "/users/" not in a["href"]:
+                return []
+            profile_url = a["href"]
+            if not profile_url.startswith("http"):
+                profile_url = f"https://setka.ru{profile_url}"
+            cand = cls._profile_from_url(
+                profile_url, company_name, inn,
+                company_verified=True,
+                context_blob=resp.text[:4000],
+            )
+            return [cand] if cand else []
+        except Exception:
+            return []
+
+    @classmethod
+    def _profile_from_url(
+        cls,
+        url: str,
+        company_name: str,
+        inn: str,
+        company_verified: bool = False,
+        context_blob: str = "",
+    ) -> Optional[Dict]:
+        profile = ProfileVerifier.parse_setka_profile(url)
+        if not profile.get("name") and not profile.get("raw_title"):
+            return None
+        blob = " ".join([
+            profile.get("raw_title", ""),
+            profile.get("role", ""),
+            profile.get("description", ""),
+            context_blob,
+        ])
+        match = ProfileVerifier.company_match_score(blob, company_name, inn)
+        role = profile.get("role") or "Специалист (Сетка)"
+        hint = IdentityLayer.classify_stakeholder(role, "setka_verified")
+        cfg = IdentityLayer.STAKEHOLDER_CONFIG.get(hint, IdentityLayer.STAKEHOLDER_CONFIG["lvr"])
+        conf = ProfileVerifier.compute_confidence(
+            profile, company_name, inn, hint, cfg["role_keywords"],
+        )
+        if not company_verified and match < 12:
+            return None
+        if company_verified:
+            conf = max(conf, 48)
+            match = max(match, 20)
+        if conf < 40:
+            return None
+        name = profile.get("name") or "—"
+        return {
+            "name": name,
+            "role": role,
+            "source": "Setka Post→Author (verified)" if company_verified else "Setka Dork (verified)",
+            "source_type": "setka_verified",
+            "confidence_base": max(conf, 45),
+            "profile_url": url.split("?")[0],
+            "profile_resolved": True,
+            "profile_platform": "Сетка",
+            "company_verified": company_verified or match >= 15,
+            "stakeholder_hint": hint,
+        }
+
+
 class IdentityLayer:
     """
     Clay-grade pipeline: Identity → Profile Resolve → Verify → Power Map slot.
@@ -548,7 +718,7 @@ class IdentityLayer:
     })
     TRUSTED_SOURCE_TYPES = frozenset({
         "dadata", "website", "hh_vacancy", "hh_vacancy_it", "hh_vacancy_hr", "hh_vacancy_lpr",
-        "habr_vacancy", "tenchat_verified",
+        "habr_vacancy", "tenchat_verified", "setka_verified",
     })
 
     STAKEHOLDER_CONFIG = {
@@ -603,6 +773,7 @@ class IdentityLayer:
         candidates.extend(WebsiteTeamParser.discover(website_url, clean))
         candidates.extend(HHVacancyParser.discover(clean, product_domain, inn))
         candidates.extend(TenChatCompanyParser.discover(clean, inn))
+        candidates.extend(SetkaCompanyParser.discover(clean, inn, product_domain))
 
         try:
             from scraper import ProfessionalNetworkScraper
@@ -643,6 +814,41 @@ class IdentityLayer:
         found = []
         for item in pool:
             url = item.get("url", "")
+            if "setka.ru/users/" in url:
+                if not ProfileDorkResolver._is_valid_profile_url(url, "setka"):
+                    continue
+                profile = ProfileVerifier.parse_setka_profile(url)
+                blob = " ".join([
+                    profile.get("raw_title", ""),
+                    profile.get("role", ""),
+                    profile.get("description", ""),
+                    item.get("title", ""),
+                    item.get("snippet", ""),
+                ])
+                conf = ProfileVerifier.compute_confidence(
+                    profile, company_name, inn, "lvr",
+                    IdentityLayer.STAKEHOLDER_CONFIG["lvr"]["role_keywords"],
+                )
+                if conf >= 35 or ProfileVerifier.company_match_score(blob, company_name, inn) >= 18:
+                    name = profile.get("name") or item.get("title", "").split("—")[0].strip()
+                    if name and name != "—":
+                        found.append({
+                            "name": name,
+                            "role": profile.get("role") or "Специалист (Сетка)",
+                            "source": "Setka (Dorking + Verify)",
+                            "source_type": "setka_verified",
+                            "confidence_base": conf,
+                            "profile_url": url.split("?")[0],
+                            "profile_platform": "Сетка",
+                            "profile_resolved": True,
+                            "profile_confidence": conf,
+                            "company_verified": ProfileVerifier.company_match_score(blob, company_name, inn) >= 15,
+                        })
+                continue
+            if "setka.ru/posts/" in url:
+                for cand in SetkaCompanyParser._profile_from_post(url, company_name, inn):
+                    found.append(cand)
+                continue
             if "tenchat.ru" not in url or "/media" in url:
                 continue
             if not ProfileDorkResolver._is_valid_profile_url(url, "tenchat"):
@@ -750,6 +956,8 @@ class IdentityLayer:
             role_bonus = 25 if slot == "lvr" and c.get("source_type") in ("hh_vacancy_it", "habr_vacancy") else 0
             role_bonus += 25 if slot == "hr" and c.get("source_type") == "hh_vacancy_hr" else 0
             role_bonus += 20 if slot == "lpr" and c.get("source_type") == "hh_vacancy_lpr" else 0
+            role_bonus += 18 if slot == "lvr" and c.get("source_type") == "setka_verified" else 0
+            role_bonus += 15 if slot == "hr" and c.get("source_type") == "setka_verified" else 0
             role_bonus += 15 if slot == "lpr" and c.get("source_type") == "tenchat_verified" else 0
             if name == "—" and slot in ("lvr", "hr") and c.get("source_type") in ("hh_vacancy_it", "hh_vacancy_hr", "habr_vacancy"):
                 base += 10
@@ -789,6 +997,7 @@ class IdentityLayer:
             "profile_confidence": 0,
             "profile_badge": "Smart Search",
             "search_link_tenchat": "",
+            "search_link_setka": "",
             "search_link_linkedin": "",
             "search_link_hh": "",
             "dork_query": "",
@@ -812,9 +1021,26 @@ class IdentityLayer:
                 })
                 if conf >= 40:
                     return result
+            elif "setka.ru/users/" in url:
+                verified = ProfileVerifier.parse_setka_profile(url)
+                conf = ProfileVerifier.compute_confidence(
+                    verified, company_name, inn, stakeholder_type, cfg["role_keywords"], name
+                )
+                result.update({
+                    "profile_url": url,
+                    "profile_resolved": conf >= 40,
+                    "profile_platform": "Сетка",
+                    "profile_confidence": conf,
+                    "profile_badge": ProfileVerifier.badge_for_confidence(conf, conf >= 40),
+                    "search_link_setka": url,
+                    "dork_query": "setka_verified_pool",
+                })
+                if conf >= 40:
+                    return result
 
         if name and name not in ("—", "Контакт не найден"):
-            for platform in ("tenchat", "linkedin", "hh"):
+            platforms = ["tenchat", "setka", "linkedin", "hh"] if stakeholder_type in ("lvr", "hr") else ["tenchat", "linkedin", "hh"]
+            for platform in platforms:
                 resolved = ProfileDorkResolver.resolve_profile(
                     company_name, name, role, platforms=[platform], stakeholder_type=stakeholder_type
                 )
@@ -832,6 +1058,22 @@ class IdentityLayer:
                     conf = max(conf, ProfileVerifier.compute_confidence(
                         verified, company_name, inn, stakeholder_type, cfg["role_keywords"], name
                     ))
+                elif platform == "setka" and ProfileDorkResolver._is_valid_profile_url(url, "setka"):
+                    verified = ProfileVerifier.parse_setka_profile(url)
+                    company_score = ProfileVerifier.company_match_score(
+                        " ".join([
+                            verified.get("raw_title", ""),
+                            verified.get("role", ""),
+                            verified.get("description", ""),
+                            resolved.get("title", ""),
+                        ]),
+                        company_name, inn,
+                    )
+                    if company_score < 12 and stakeholder_type in ("ceo", "lpr"):
+                        continue
+                    conf = max(conf, ProfileVerifier.compute_confidence(
+                        verified, company_name, inn, stakeholder_type, cfg["role_keywords"], name
+                    ))
                 if platform == "linkedin" and "linkedin.com/in" in url:
                     conf = max(conf, 45 + ProfileVerifier.company_match_score(
                         resolved.get("title", ""), company_name, inn
@@ -840,24 +1082,31 @@ class IdentityLayer:
                     result.update({
                         "profile_url": url,
                         "profile_resolved": True,
-                        "profile_platform": {"tenchat": "TenChat", "linkedin": "LinkedIn", "hh": "HH.ru"}.get(platform, platform),
+                        "profile_platform": {
+                            "tenchat": "TenChat", "setka": "Сетка",
+                            "linkedin": "LinkedIn", "hh": "HH.ru",
+                        }.get(platform, platform),
                         "profile_confidence": conf,
                         "profile_badge": ProfileVerifier.badge_for_confidence(conf, True),
                         "dork_query": resolved.get("dork_query", ""),
                     })
                     if platform == "tenchat":
                         result["search_link_tenchat"] = url
+                    elif platform == "setka":
+                        result["search_link_setka"] = url
                     elif platform == "linkedin":
                         result["search_link_linkedin"] = url
                     else:
                         result["search_link_hh"] = url
                     return result
 
+        fallback_setka = f"https://setka.ru/search?q={urllib.parse.quote(f'{company_name} {name} {role}')}"
         fallback_tenchat = f"https://tenchat.ru/search?query={urllib.parse.quote(f'{company_name} {name} {role}')}"
         fallback_linkedin = f"https://www.linkedin.com/search/results/people/?keywords={urllib.parse.quote(f'{company_name} {name}')}"
         fallback_hh = f"https://hh.ru/search/vacancy?text={urllib.parse.quote(company_name)}"
         result["profile_url"] = fallback_tenchat
         result["search_link_tenchat"] = fallback_tenchat
+        result["search_link_setka"] = fallback_setka
         result["search_link_linkedin"] = fallback_linkedin
         result["search_link_hh"] = fallback_hh
         result["profile_badge"] = "Smart Search"
@@ -948,6 +1197,21 @@ class PowerMapBuilder:
                             verified, clean_name, inn, slot,
                             cfg["role_keywords"], "",
                         )) if company_ok else 0
+                    elif "setka.ru/users/" in url:
+                        verified = ProfileVerifier.parse_setka_profile(url)
+                        company_ok = ProfileVerifier.company_match_score(
+                            " ".join([
+                                verified.get("raw_title", ""),
+                                verified.get("role", ""),
+                                verified.get("description", ""),
+                                role_dork.get("title", ""),
+                            ]),
+                            clean_name, inn,
+                        ) >= 12 or slot in ("lvr", "hr")
+                        conf = max(conf, ProfileVerifier.compute_confidence(
+                            verified, clean_name, inn, slot,
+                            cfg["role_keywords"], "",
+                        )) if company_ok else 0
                     if company_ok and conf >= 40:
                         profiles.update({
                             "profile_url": url,
@@ -956,6 +1220,7 @@ class PowerMapBuilder:
                             "profile_confidence": conf,
                             "profile_badge": ProfileVerifier.badge_for_confidence(conf, True),
                             "search_link_tenchat": url if "tenchat" in url else profiles.get("search_link_tenchat"),
+                            "search_link_setka": url if "setka.ru" in url else profiles.get("search_link_setka"),
                             "dork_query": role_dork.get("dork_query", ""),
                         })
                         if picked is None and name == "Контакт не найден":
@@ -1004,6 +1269,10 @@ class PowerMapBuilder:
                     "search_link_tenchat",
                     f"https://tenchat.ru/search?query={urllib.parse.quote(f'{clean_name} {role}')}",
                 )
+                profiles.setdefault(
+                    "search_link_setka",
+                    f"https://setka.ru/search?q={urllib.parse.quote(f'{clean_name} {role}')}",
+                )
 
             entry = {
                 "power_type": cfg["power_type"],
@@ -1028,6 +1297,7 @@ class PowerMapBuilder:
                     "is_verified": email_data["is_verified"],
                     "telegram": f"@{ContactEnrichmentEngine.transliterate((name.split()[0] if name not in ('—', 'Контакт не найден') else 'contact'))}_{email_domain.split('.')[0]}",
                     "search_link_tenchat": profiles.get("search_link_tenchat", ""),
+                    "search_link_setka": profiles.get("search_link_setka", ""),
                     "search_link_linkedin": profiles.get("search_link_linkedin", ""),
                     "search_link_hh": profiles.get("search_link_hh", ""),
                     "profile_badge": profiles.get("profile_badge", "Smart Search"),
