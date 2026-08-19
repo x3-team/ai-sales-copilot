@@ -718,7 +718,7 @@ class IdentityLayer:
     })
     TRUSTED_SOURCE_TYPES = frozenset({
         "dadata", "website", "hh_vacancy", "hh_vacancy_it", "hh_vacancy_hr", "hh_vacancy_lpr",
-        "habr_vacancy", "tenchat_verified", "setka_verified",
+        "habr_vacancy", "tenchat_verified", "setka_verified", "hh_resume_api",
     })
 
     STAKEHOLDER_CONFIG = {
@@ -790,6 +790,18 @@ class IdentityLayer:
             pass
 
         candidates.extend(cls._candidates_from_verified_dork_pool(clean, inn, product_domain))
+
+        # HH Employer API (optional BYOS) — резюме с опытом в компании
+        try:
+            from hh_auth import HHAuthClient
+            if HHAuthClient.is_configured():
+                candidates.extend(
+                    HHAuthClient.discover_candidates_for_company(
+                        clean, inn, product_domain, limit=12,
+                    )
+                )
+        except Exception:
+            pass
 
         # TenChat BYOS — optional, последний приоритет (токены часто протухают)
         try:
@@ -892,6 +904,8 @@ class IdentityLayer:
             return "hr"
         if source_type in ("hh_vacancy_lpr",):
             return "lpr"
+        if source_type in ("hh_resume_api",):
+            return "lpr"  # overridden by stakeholder_hint on candidate
         if source_type in ("hh_vacancy_it", "habr_vacancy"):
             return "lvr"
         return "lpr"
@@ -956,6 +970,9 @@ class IdentityLayer:
             role_bonus = 25 if slot == "lvr" and c.get("source_type") in ("hh_vacancy_it", "habr_vacancy") else 0
             role_bonus += 25 if slot == "hr" and c.get("source_type") == "hh_vacancy_hr" else 0
             role_bonus += 20 if slot == "lpr" and c.get("source_type") == "hh_vacancy_lpr" else 0
+            role_bonus += 28 if slot == "lpr" and c.get("source_type") == "hh_resume_api" and c.get("stakeholder_hint") == "lpr" else 0
+            role_bonus += 28 if slot == "lvr" and c.get("source_type") == "hh_resume_api" and c.get("stakeholder_hint") == "lvr" else 0
+            role_bonus += 22 if slot == "hr" and c.get("source_type") == "hh_resume_api" and c.get("stakeholder_hint") == "hr" else 0
             role_bonus += 18 if slot == "lvr" and c.get("source_type") == "setka_verified" else 0
             role_bonus += 15 if slot == "hr" and c.get("source_type") == "setka_verified" else 0
             role_bonus += 15 if slot == "lpr" and c.get("source_type") == "tenchat_verified" else 0
@@ -1037,6 +1054,18 @@ class IdentityLayer:
                 })
                 if conf >= 40:
                     return result
+            elif "hh.ru/resume" in url or existing_profile.get("source_type") == "hh_resume_api":
+                conf = existing_profile.get("confidence_base", 65)
+                result.update({
+                    "profile_url": url,
+                    "profile_resolved": True,
+                    "profile_platform": "HH.ru",
+                    "profile_confidence": conf,
+                    "profile_badge": ProfileVerifier.badge_for_confidence(conf, True),
+                    "search_link_hh": url,
+                    "dork_query": "hh_resume_api",
+                })
+                return result
 
         if name and name not in ("—", "Контакт не найден"):
             platforms = ["tenchat", "setka", "linkedin", "hh"] if stakeholder_type in ("lvr", "hr") else ["tenchat", "linkedin", "hh"]
@@ -1244,6 +1273,13 @@ class PowerMapBuilder:
                 if name in ("—", "Контакт не найден"):
                     profiles["profile_badge"] = "Probable"
                     profiles["profile_platform"] = "hh.ru"
+            elif picked and picked.get("source_type") == "hh_resume_api" and picked.get("profile_url"):
+                profiles["profile_url"] = picked["profile_url"]
+                profiles["search_link_hh"] = picked["profile_url"]
+                profiles["profile_resolved"] = True
+                profiles["profile_platform"] = "HH.ru"
+                profiles["profile_confidence"] = max(profiles.get("profile_confidence", 0), picked.get("confidence_base", 65))
+                profiles["profile_badge"] = ProfileVerifier.badge_for_confidence(profiles["profile_confidence"], True)
 
             if (
                 slot != "ceo"

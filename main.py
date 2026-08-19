@@ -416,11 +416,14 @@ def _extract_website_from_dadata(data: dict) -> str:
 
 @app.get("/api/copilot/sources-status")
 def copilot_sources_status():
-    """Статус интеграций: core (без cookies) + optional TenChat BYOS."""
+    """Статус интеграций: core (без cookies) + optional BYOS (TenChat, HH Employer)."""
     from tenchat_auth import TenChatAuthClient
+    from hh_auth import HHAuthClient
     tenchat = TenChatAuthClient.session_status()
+    hh = HHAuthClient.session_status()
+    optional_full = tenchat.get("authenticated") or hh.get("resume_access")
     return {
-        "mvp_mode": "full" if tenchat.get("authenticated") else "core_without_tenchat_auth",
+        "mvp_mode": "full" if optional_full else "core_without_byos",
         "core": {
             "dadata": {
                 "available": bool(DADATA_API_KEY),
@@ -454,6 +457,18 @@ def copilot_sources_status():
             },
         },
         "optional": {
+            "hh_employer": {
+                "configured": hh.get("configured", False),
+                "authenticated": hh.get("authenticated", False),
+                "resume_access": hh.get("resume_access", False),
+                "label": "HH Employer API",
+                "message": hh.get("message", ""),
+                "setup": (
+                    "1. Зарегистрируйте приложение на https://dev.hh.ru/admin\n"
+                    "2. OAuth token работодателя с доступом к базе резюме (платно)\n"
+                    "3. .env: HH_ACCESS_TOKEN=... и HH_USER_AGENT=AI-Sales-Copilot/1.0 (email@domain.com)"
+                ),
+            },
             "tenchat_auth": {
                 "configured": tenchat.get("configured", False),
                 "authenticated": tenchat.get("authenticated", False),
@@ -467,6 +482,13 @@ def copilot_sources_status():
             },
         },
     }
+
+
+@app.get("/api/copilot/hh-status")
+def hh_session_status():
+    """Проверка HH Employer OAuth (без вывода токена)."""
+    from hh_auth import HHAuthClient
+    return HHAuthClient.session_status()
 
 
 @app.get("/api/copilot/tenchat-status")
@@ -584,10 +606,17 @@ def enrich_company_profile(inn: str = Query(..., description="ИНН компа�
     pain_points.append(f"Сформирована карта из {len(lpr_list)} стейкхолдеров (Identity Layer: DaData + HH + сайт + TenChat verify).")
 
     from tenchat_auth import TenChatAuthClient
+    from hh_auth import HHAuthClient
+    tc_ok = TenChatAuthClient.is_configured() and TenChatAuthClient.session_status().get("authenticated")
+    hh_ok = HHAuthClient.is_configured() and HHAuthClient.session_status().get("resume_access")
     sources_note = (
-        "TenChat BYOS подключён — расширенный поиск активен."
-        if TenChatAuthClient.is_configured() and TenChatAuthClient.session_status().get("authenticated")
-        else "TenChat не подключён — MVP работает на DaData, HH, сайте и публичном TenChat."
+        "TenChat BYOS + HH Employer API активны — расширенный поиск ЛПР."
+        if tc_ok and hh_ok
+        else "TenChat BYOS активен — расширенный поиск TenChat."
+        if tc_ok
+        else "HH Employer API активен — поиск резюме по опыту в компании."
+        if hh_ok
+        else "Core-режим: DaData, HH вакансии, сайт, TenChat/Setka public verify."
     )
 
     return {
@@ -814,17 +843,21 @@ def get_demo_ui():
                     <div class="d-flex flex-wrap gap-2" id="sourcesChips"></div>
                 </div>
                 <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#tenchatByosHelp">
-                    <i class="bi bi-plug me-1"></i> Подключить TenChat (optional)
+                    <i class="bi bi-plug me-1"></i> Подключить HH / TenChat (optional)
                 </button>
             </div>
             <div class="collapse mt-3" id="tenchatByosHelp">
                 <div class="p-3 bg-white rounded-3 border small text-muted">
-                    <strong class="text-dark">BYOS — Bring Your Own Session.</strong> MVP не требует cookies TenChat.
-                    Для расширенного поиска добавьте в локальный <code>.env</code>:
-                    <pre class="bg-light p-2 rounded mt-2 mb-2 small">TENCHAT_ACCESS_TOKEN=ваш_Bearer_токен
+                    <strong class="text-dark">Optional BYOS — Bring Your Own Session.</strong> MVP не требует OAuth.
+                    <div class="mt-2"><strong>HH Employer API</strong> (рекомендуется для ФИО ЛПР):</div>
+                    <pre class="bg-light p-2 rounded mt-1 mb-2 small">HH_ACCESS_TOKEN=oauth_token_работодателя
+HH_USER_AGENT=AI-Sales-Copilot/1.0 (you@company.com)</pre>
+                    Регистрация приложения: <a href="https://dev.hh.ru/admin" target="_blank">dev.hh.ru/admin</a>.
+                    Нужен аккаунт работодателя + платный доступ к базе резюме.
+                    <div class="mt-2"><strong>TenChat BYOS</strong> (расширенный поиск):</div>
+                    <pre class="bg-light p-2 rounded mt-1 mb-2 small">TENCHAT_ACCESS_TOKEN=ваш_Bearer_токен
 TENCHAT_REFRESH_TOKEN=ваш_refresh_токен</pre>
-                    DevTools → Network → любой запрос к tenchat.ru → заголовок <code>Authorization: Bearer ...</code>.
-                    Перезапустите <code>uvicorn</code>. Токен живёт ~2 недели.
+                    DevTools → Network → tenchat.ru → Authorization: Bearer ...
                 </div>
             </div>
         </div>
@@ -1036,15 +1069,17 @@ TENCHAT_REFRESH_TOKEN=ваш_refresh_токен</pre>
                 banner.classList.remove('d-none');
 
                 const tenchat = data.optional?.tenchat_auth || {};
+                const hh = data.optional?.hh_employer || {};
                 const isAuth = tenchat.authenticated;
-                banner.className = `sources-banner p-3 mb-4 shadow-sm ${isAuth ? '' : 'tenchat-off'}`;
+                const hhResume = hh.resume_access;
+                banner.className = `sources-banner p-3 mb-4 shadow-sm ${(isAuth || hhResume) ? '' : 'tenchat-off'}`;
 
-                document.getElementById('sourcesModeTitle').innerText = isAuth
-                    ? 'Identity Layer: полный режим (TenChat BYOS активен)'
-                    : 'Identity Layer: core-режим (без TenChat cookies)';
-                document.getElementById('sourcesModeDetail').innerText = isAuth
-                    ? tenchat.message || 'TenChat BYOS подключён — расширенный поиск сотрудников.'
-                    : 'TenChat не подключён — MVP работает на DaData, HH.ru, сайте компании и публичном TenChat verify.';
+                document.getElementById('sourcesModeTitle').innerText = (isAuth || hhResume)
+                    ? 'Identity Layer: расширенный режим (BYOS активен)'
+                    : 'Identity Layer: core-режим (без OAuth cookies)';
+                document.getElementById('sourcesModeDetail').innerText = (isAuth || hhResume)
+                    ? [isAuth ? 'TenChat BYOS' : null, hhResume ? 'HH Employer API' : null].filter(Boolean).join(' + ') + ' подключены.'
+                    : 'OAuth не подключён — MVP работает на DaData, HH вакансиях, сайте и public verify.';
 
                 chips.innerHTML = '';
                 Object.values(data.core || {}).forEach(src => {
@@ -1054,6 +1089,11 @@ TENCHAT_REFRESH_TOKEN=ваш_refresh_токен</pre>
                     chip.title = src.detail || '';
                     chips.appendChild(chip);
                 });
+                const hhChip = document.createElement('span');
+                hhChip.className = `source-chip ${hhResume ? 'ok' : 'warn'}`;
+                hhChip.innerHTML = `<i class="bi bi-${hhResume ? 'check-circle' : 'info-circle'} me-1"></i>HH API ${hhResume ? 'ON' : 'optional'}`;
+                hhChip.title = hh.setup || hh.message || '';
+                chips.appendChild(hhChip);
                 const tcChip = document.createElement('span');
                 tcChip.className = `source-chip ${isAuth ? 'ok' : 'warn'}`;
                 tcChip.innerHTML = `<i class="bi bi-${isAuth ? 'check-circle' : 'info-circle'} me-1"></i>TenChat BYOS ${isAuth ? 'ON' : 'optional'}`;
