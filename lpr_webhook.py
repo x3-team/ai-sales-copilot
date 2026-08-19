@@ -1,28 +1,42 @@
 """
-Webhook-интеграция с внешним LPR-сервисом (TenChat / LinkedIn).
+Webhook-интеграция с внешним LPR-сервисом (Soprano / Grok Bot).
 
-Паттерн без документации:
-  1. Мы создаём job и отдаём callback URL + промпт.
-  2. Провайдер выполняет задачу и вызывает наш webhook с result_url или с данными inline.
-  3. Мы скачиваем result_url (если есть) и нормализуем в candidates[] для Identity Layer.
+Безопасность inbound:
+  - только HTTPS (Render edge + проверка X-Forwarded-Proto)
+  - job_id = UUID v4 в path (не в query)
+  - HMAC-SHA256 подпись тела: X-Webhook-Timestamp + X-Webhook-Signature
+  - replay window ±5 мин
+  - PII не логируется в plaintext
 """
 from __future__ import annotations
 
 import hashlib
 import hmac
 import json
+import logging
 import os
+import re
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+logger = logging.getLogger(__name__)
+
 WEBHOOK_BASE_URL = (os.environ.get("WEBHOOK_BASE_URL") or os.environ.get("PUBLIC_BASE_URL") or "").rstrip("/")
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
+WEBHOOK_HMAC_SECRET = (os.environ.get("WEBHOOK_HMAC_SECRET") or os.environ.get("WEBHOOK_SECRET") or "").strip()
 LPR_AGENT_SUBMIT_URL = os.environ.get("LPR_AGENT_SUBMIT_URL", "").strip()
 LPR_AGENT_API_KEY = os.environ.get("LPR_AGENT_API_KEY", "").strip()
 JOB_TTL = int(os.environ.get("LPR_JOB_TTL", "86400"))
+REPLAY_TOLERANCE = int(os.environ.get("WEBHOOK_REPLAY_TOLERANCE", "300"))
+WEBHOOK_REQUIRE_HTTPS = os.environ.get("WEBHOOK_REQUIRE_HTTPS", "1") == "1"
+WEBHOOK_ALLOW_HTTP = os.environ.get("WEBHOOK_ALLOW_HTTP", "0") == "1"
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    re.I,
+)
 
 _jobs: Dict[str, Dict[str, Any]] = {}
 
@@ -38,19 +52,97 @@ def _purge_expired() -> None:
         _jobs.pop(jid, None)
 
 
+def _assert_https_base_url(url: str) -> None:
+    if url.startswith("https://"):
+        return
+    if WEBHOOK_ALLOW_HTTP and url.startswith("http://127.0.0.1"):
+        return
+    if WEBHOOK_ALLOW_HTTP and url.startswith("http://localhost"):
+        return
+    raise ValueError("WEBHOOK_BASE_URL должен быть https:// (Render public URL)")
+
+
 def build_callback_url(job_id: str) -> str:
     if not WEBHOOK_BASE_URL:
         raise ValueError(
-            "WEBHOOK_BASE_URL не задан — укажите публичный URL сервиса, "
-            "например https://your-app.onrender.com"
+            "WEBHOOK_BASE_URL не задан — укажите публичный HTTPS URL сервиса на Render"
         )
-    return f"{WEBHOOK_BASE_URL}/api/webhooks/lpr/inbound?job_id={job_id}"
+    _assert_https_base_url(WEBHOOK_BASE_URL)
+    return f"{WEBHOOK_BASE_URL}/api/webhooks/lpr/inbound/{job_id}"
 
 
-def verify_inbound_secret(provided: Optional[str]) -> bool:
-    if not WEBHOOK_SECRET:
+def validate_job_id(job_id: str) -> None:
+    if not _UUID_RE.match(job_id or ""):
+        raise ValueError("Invalid job_id")
+
+
+def verify_https_inbound(forwarded_proto: Optional[str]) -> bool:
+    if not WEBHOOK_REQUIRE_HTTPS:
         return True
-    return hmac.compare_digest(provided or "", WEBHOOK_SECRET)
+    if WEBHOOK_ALLOW_HTTP:
+        return True
+    return (forwarded_proto or "").lower() == "https"
+
+
+def compute_inbound_signature(timestamp: str, body: bytes) -> str:
+    signed_payload = f"{timestamp}.".encode("utf-8") + body
+    return hmac.new(
+        WEBHOOK_HMAC_SECRET.encode("utf-8"),
+        signed_payload,
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def verify_inbound_hmac(
+    timestamp: Optional[str],
+    signature: Optional[str],
+    body: bytes,
+) -> Tuple[bool, str]:
+    if not WEBHOOK_HMAC_SECRET:
+        return False, "WEBHOOK_HMAC_SECRET не настроен на сервере"
+    if not timestamp or not signature:
+        return False, "Требуются заголовки X-Webhook-Timestamp и X-Webhook-Signature"
+    try:
+        ts = int(timestamp)
+    except (TypeError, ValueError):
+        return False, "Некорректный X-Webhook-Timestamp"
+    if abs(_now() - ts) > REPLAY_TOLERANCE:
+        return False, "Timestamp вне окна replay (±5 мин)"
+    expected = compute_inbound_signature(timestamp, body)
+    if not hmac.compare_digest(expected, signature.strip()):
+        return False, "Неверная подпись X-Webhook-Signature"
+    return True, ""
+
+
+def _redact_pii_value(value: Any) -> Any:
+    if not value or not isinstance(value, str):
+        return value
+    if "@" in value:
+        local, _, domain = value.partition("@")
+        return f"{local[:1]}***@{domain}" if domain else "***"
+    if value.startswith("http"):
+        return value.split("/")[-1][:4] + "***" if len(value) > 8 else "***"
+    digits = re.sub(r"\D", "", value)
+    if len(digits) >= 7:
+        return f"***{digits[-2:]}"
+    return "***"
+
+
+def _redact_contact(contact: Dict[str, Any]) -> Dict[str, Any]:
+    redacted = dict(contact)
+    for key in ("email", "phone", "telegram"):
+        if redacted.get(key):
+            redacted[key] = _redact_pii_value(redacted[key])
+    return redacted
+
+
+def _log_inbound(job_id: str, status: str, candidates_count: int = 0) -> None:
+    logger.info(
+        "lpr_webhook inbound job_id=%s status=%s candidates=%s",
+        job_id,
+        status,
+        candidates_count,
+    )
 
 
 def create_job(
@@ -66,7 +158,7 @@ def create_job(
     _purge_expired()
     job_id = str(uuid.uuid4())
     callback_url = build_callback_url(job_id)
-    plats = platforms or ["tenchat", "linkedin"]
+    plats = platforms or ["tenchat"]
 
     job = {
         "job_id": job_id,
@@ -98,45 +190,54 @@ def create_job(
         "inn": inn,
         "company_name": company_name,
         "platforms": plats,
-        "instructions_for_provider": {
-            "provider": "soprano",
-            "callback_url": callback_url,
-            "callback_method": "POST",
-            "callback_query": {"job_id": job_id},
-            "callback_body_contract": {
-                "status": "completed",
-                "contacts": [
-                    {
-                        "name": "Лайтнер Илья Юрьевич",
-                        "role": "Генеральный директор, 100% учредитель",
-                        "company": "ООО «МАКС»",
-                        "profile_url": "https://tenchat.ru/0852009",
-                        "telegram": "https://t.me/laitnerbro",
-                        "email": "maxsait1541@gmail.com",
-                        "phone": None,
-                        "source": "TenChat · профиль + страница компании",
-                        "confidence": 95,
-                        "stakeholder_hint": "ceo",
-                        "extra_links": [
-                            "https://tenchat.ru/1237700247168",
-                            "https://m-a-x.online",
-                        ],
-                    }
-                ],
-            },
-            "rules": [
-                "Не выдумывать email/phone — только то, что видно в профиле или открытых источниках",
-                "Пустые поля — null или omit",
-                "Можно вернуть result_url вместо inline contacts",
-            ],
-            "optional_header": "X-Webhook-Secret: <WEBHOOK_SECRET>" if WEBHOOK_SECRET else None,
-        },
+        "instructions_for_provider": _provider_instructions(job_id, callback_url),
         "auto_submit": submit_info,
     }
 
 
+def _provider_instructions(job_id: str, callback_url: str) -> Dict[str, Any]:
+    return {
+        "provider": "soprano",
+        "callback_url": callback_url,
+        "callback_method": "POST",
+        "callback_path_note": "job_id только в path, контакты только в JSON body",
+        "auth": {
+            "type": "hmac-sha256",
+            "headers": {
+                "X-Webhook-Timestamp": "unix seconds (UTC)",
+                "X-Webhook-Signature": "hex hmac-sha256(timestamp + '.' + raw_body)",
+            },
+            "replay_window_seconds": REPLAY_TOLERANCE,
+            "signature_example_pseudo": "HMAC_SHA256(secret, f'{timestamp}.{raw_json_body}')",
+        },
+        "callback_body_contract": {
+            "status": "completed",
+            "contacts": [
+                {
+                    "name": "ФИО",
+                    "role": "Должность",
+                    "company": "ООО «…»",
+                    "profile_url": "https://tenchat.ru/…",
+                    "telegram": "https://t.me/…",
+                    "email": "… или null",
+                    "phone": "… или null",
+                    "source": "TenChat · …",
+                    "confidence": 95,
+                    "stakeholder_hint": "ceo",
+                    "extra_links": ["https://…"],
+                }
+            ],
+        },
+        "rules": [
+            "HTTPS only",
+            "Не выдумывать email/phone",
+            "Пустые поля — null или omit",
+            "Можно вернуть result_url (HTTPS) вместо inline contacts",
+        ],
+    }
+
+
 def submit_task_to_provider(job: Dict[str, Any] | None = None, job_id: str = "") -> Dict[str, Any]:
-    """Опционально: POST задачи на URL провайдера, если LPR_AGENT_SUBMIT_URL задан."""
     if job is None:
         job = get_job(job_id)
     if not LPR_AGENT_SUBMIT_URL:
@@ -147,6 +248,7 @@ def submit_task_to_provider(job: Dict[str, Any] | None = None, job_id: str = "")
         "task": job["prompt"],
         "webhook_url": job["webhook_url"],
         "callback_url": job["webhook_url"],
+        "job_id": job["job_id"],
         "inn": job.get("inn"),
         "company": job.get("company_name"),
         "company_name": job.get("company_name"),
@@ -173,14 +275,18 @@ def submit_task_to_provider(job: Dict[str, Any] | None = None, job_id: str = "")
 
 
 def get_job(job_id: str) -> Dict[str, Any]:
+    validate_job_id(job_id)
     job = _jobs.get(job_id)
     if not job:
         raise KeyError(f"Job {job_id} not found")
     return job
 
 
-def get_job_public(job_id: str) -> Dict[str, Any]:
+def get_job_public(job_id: str, *, include_pii: bool = True) -> Dict[str, Any]:
     job = get_job(job_id)
+    candidates = job.get("candidates") or []
+    if not include_pii:
+        candidates = [_redact_contact(c) for c in candidates]
     return {
         "job_id": job["job_id"],
         "status": job["status"],
@@ -189,7 +295,7 @@ def get_job_public(job_id: str) -> Dict[str, Any]:
         "webhook_url": job.get("webhook_url"),
         "result_url": job.get("result_url"),
         "candidates_count": len(job.get("candidates") or []),
-        "candidates": job.get("candidates") or [],
+        "candidates": candidates,
         "error": job.get("error"),
         "created_at": job.get("created_at"),
         "updated_at": job.get("updated_at"),
@@ -197,30 +303,30 @@ def get_job_public(job_id: str) -> Dict[str, Any]:
 
 
 def handle_inbound_webhook(job_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Принимает callback от провайдера.
-    Поддерживает:
-      - result_url / url / results_url → скачиваем JSON
-      - contacts / results / people / data → inline
-    """
     job = get_job(job_id)
     job["status"] = "running"
     job["updated_at"] = _now()
 
     result_url = _extract_result_url(payload)
     if result_url:
+        if not result_url.startswith("https://"):
+            job["status"] = "failed"
+            job["error"] = "result_url должен быть HTTPS"
+            job["updated_at"] = _now()
+            _log_inbound(job_id, "failed")
+            return get_job_public(job_id)
         job["result_url"] = result_url
         try:
             fetched = fetch_result_url(result_url)
             payload = {**payload, **fetched} if isinstance(fetched, dict) else {"data": fetched}
-
         except Exception as exc:
             job["status"] = "failed"
             job["error"] = f"Не удалось скачать result_url: {exc}"
             job["updated_at"] = _now()
+            _log_inbound(job_id, "failed")
             return get_job_public(job_id)
 
-    candidates = normalize_contacts(payload, provider="lpr_agent")
+    candidates = normalize_contacts(payload, provider="soprano")
     if not candidates:
         status = (payload.get("status") or "").lower()
         if status in ("failed", "error"):
@@ -235,11 +341,18 @@ def handle_inbound_webhook(job_id: str, payload: Dict[str, Any]) -> Dict[str, An
         job["error"] = None
 
     job["updated_at"] = _now()
-    job["raw_payload_keys"] = list(payload.keys())[:20]
+    _log_inbound(job_id, job["status"], len(candidates))
+    if candidates:
+        logger.debug(
+            "lpr_webhook candidates_redacted=%s",
+            json.dumps([_redact_contact(c) for c in candidates], ensure_ascii=False),
+        )
     return get_job_public(job_id)
 
 
 def fetch_result_url(url: str) -> Any:
+    if not url.startswith("https://"):
+        raise ValueError("result_url must use HTTPS")
     headers = {}
     if LPR_AGENT_API_KEY:
         headers["Authorization"] = f"Bearer {LPR_AGENT_API_KEY}"
@@ -251,7 +364,7 @@ def fetch_result_url(url: str) -> Any:
 def _extract_result_url(payload: Dict[str, Any]) -> Optional[str]:
     for key in ("result_url", "results_url", "url", "link", "download_url", "file_url"):
         val = payload.get(key)
-        if isinstance(val, str) and val.startswith("http"):
+        if isinstance(val, str) and val.startswith("https://"):
             return val
     data = payload.get("data")
     if isinstance(data, dict):
@@ -375,7 +488,6 @@ _POWER_TYPE = {
 
 
 def candidates_to_lpr_entries(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Преобразует webhook-кандидатов в формат lpr_matrix для UI."""
     out: List[Dict[str, Any]] = []
     for c in candidates:
         hint = c.get("stakeholder_hint") or "lpr"
@@ -385,7 +497,6 @@ def candidates_to_lpr_entries(candidates: List[Dict[str, Any]]) -> List[Dict[str
         conf = int(c.get("confidence_base") or c.get("profile_confidence") or 0)
         email = c.get("email") or "—"
         phone = c.get("phone") or "—"
-        telegram = c.get("telegram") or "—"
         out.append({
             "power_type": _POWER_TYPE.get(hint, _POWER_TYPE["lpr"]),
             "role": (f"{c.get('role') or 'Контакт'}" + (f" · {c['company']}" if c.get("company") else "")),
@@ -418,4 +529,14 @@ def candidates_to_lpr_entries(candidates: List[Dict[str, Any]]) -> List[Dict[str
 
 
 def is_configured() -> bool:
-    return bool(WEBHOOK_BASE_URL)
+    if not WEBHOOK_BASE_URL:
+        return False
+    try:
+        _assert_https_base_url(WEBHOOK_BASE_URL)
+    except ValueError:
+        return False
+    return True
+
+
+def hmac_configured() -> bool:
+    return bool(WEBHOOK_HMAC_SECRET)

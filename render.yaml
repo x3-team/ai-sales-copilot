@@ -1,0 +1,27 @@
+# Blueprint: AI Sales Copilot (FastAPI)
+# Deploy: Render Dashboard → New → Blueprint → connect repo
+services:
+  - type: web
+    name: ai-sales-copilot
+    runtime: python
+    plan: free
+    region: frankfurt
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: WEBHOOK_BASE_URL
+        sync: false
+      - key: WEBHOOK_HMAC_SECRET
+        generateValue: true
+      - key: DADATA_API_KEY
+        sync: false
+      - key: DADATA_SECRET_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DEMO_MODE
+        value: "1"

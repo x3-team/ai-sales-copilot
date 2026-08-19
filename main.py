@@ -6,7 +6,7 @@ import io
 import time
 import requests
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, HTTPException, Query, Body, Response, Header
+from fastapi import FastAPI, HTTPException, Query, Body, Response, Header, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -508,12 +508,13 @@ def copilot_sources_status():
             },
             "lpr_webhook": {
                 "configured": lpr_webhook.is_configured(),
+                "hmac_configured": lpr_webhook.hmac_configured(),
                 "submit_url_set": bool(os.environ.get("LPR_AGENT_SUBMIT_URL")),
                 "label": "LPR Agent (webhook)",
                 "message": (
-                    "POST /api/copilot/lpr-jobs → webhook_url + prompt для провайдера"
-                    if lpr_webhook.is_configured()
-                    else "Задайте WEBHOOK_BASE_URL=https://your-app.onrender.com"
+                    "POST /api/copilot/lpr-jobs → webhook_url + HMAC auth для Soprano"
+                    if lpr_webhook.is_configured() and lpr_webhook.hmac_configured()
+                    else "Задайте WEBHOOK_BASE_URL (https) и WEBHOOK_HMAC_SECRET на Render"
                 ),
             },
         },
@@ -588,6 +589,11 @@ class LprJobCreateRequest(BaseModel):
     auto_submit: bool = True
 
 
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
+
+
 @app.post("/api/copilot/lpr-jobs")
 def create_lpr_job(body: LprJobCreateRequest):
     """
@@ -598,7 +604,12 @@ def create_lpr_job(body: LprJobCreateRequest):
     if not lpr_webhook.is_configured():
         raise HTTPException(
             status_code=503,
-            detail="WEBHOOK_BASE_URL не задан — укажите публичный URL сервиса в env",
+            detail="WEBHOOK_BASE_URL не задан — укажите публичный HTTPS URL сервиса на Render",
+        )
+    if not lpr_webhook.hmac_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="WEBHOOK_HMAC_SECRET не задан — сгенерируйте секрет в Render env",
         )
     prompt = body.prompt or lpr_webhook.default_prompt(
         body.company_name or "Компания",
@@ -626,19 +637,48 @@ def get_lpr_job(job_id: str):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.post("/api/webhooks/lpr/inbound")
-def lpr_inbound_webhook(
-    job_id: str = Query(..., description="ID задачи из create_lpr_job"),
-    payload: dict = Body(default_factory=dict),
-    x_webhook_secret: Optional[str] = Header(None, alias="X-Webhook-Secret"),
+@app.post("/api/webhooks/lpr/inbound/{job_id}")
+async def lpr_inbound_webhook(
+    job_id: str,
+    request: Request,
+    x_webhook_timestamp: Optional[str] = Header(None, alias="X-Webhook-Timestamp"),
+    x_webhook_signature: Optional[str] = Header(None, alias="X-Webhook-Signature"),
 ):
-    """Callback от внешнего LPR-сервиса: result_url или contacts."""
-    if not lpr_webhook.verify_inbound_secret(x_webhook_secret):
-        raise HTTPException(status_code=401, detail="Invalid webhook secret")
+    """Callback от Soprano: contacts только в JSON body, auth через HMAC."""
+    forwarded = request.headers.get("x-forwarded-proto") or request.url.scheme
+    if not lpr_webhook.verify_https_inbound(forwarded):
+        raise HTTPException(status_code=403, detail="HTTPS required")
+
+    try:
+        lpr_webhook.validate_job_id(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    body = await request.body()
+    ok, err = lpr_webhook.verify_inbound_hmac(x_webhook_timestamp, x_webhook_signature, body)
+    if not ok:
+        raise HTTPException(status_code=401, detail=err)
+
+    try:
+        payload = json.loads(body.decode("utf-8") or "{}")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON body") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="JSON body must be an object")
+
     try:
         return lpr_webhook.handle_inbound_webhook(job_id, payload)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/webhooks/lpr/inbound")
+async def lpr_inbound_webhook_legacy():
+    """Устаревший endpoint с job_id в query — отключён."""
+    raise HTTPException(
+        status_code=410,
+        detail="Используйте POST /api/webhooks/lpr/inbound/{job_id} с HMAC-заголовками",
+    )
 
 
 @app.post("/api/copilot/lpr-jobs/{job_id}/apply-to-enrich")
