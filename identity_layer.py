@@ -1158,7 +1158,7 @@ class PowerMapBuilder:
 
         clean_name = IdentityLayer._clean_company_name(company_name) or "Компания"
         ProfileDorkResolver.prefetch_company_pool(clean_name, product_domain)
-        email_domain = ContactEnrichmentEngine.transliterate(clean_name) + ".ru"
+        email_domain = ContactEnrichmentEngine.resolve_email_domain(website_url, clean_name)
 
         candidates = IdentityLayer.discover_candidates(
             clean_name, inn, ceo_name, product_domain, website_url

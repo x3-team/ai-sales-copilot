@@ -79,7 +79,8 @@
                 </p>
                 <div class="flex flex-wrap gap-2 justify-center">
                     <button onclick="setQuery('0278181110')" class="chip hover:border-edge-strong transition">0278181110 · ПР-Лизинг</button>
-                    <button onclick="setQuery('7707083893')" class="chip hover:border-edge-strong transition">7707083893 · Сбербанк</button>
+                    <button onclick="setQuery('7709257050')" class="chip hover:border-edge-strong transition">7709257050 · 1С-Софт</button>
+                    <button onclick="setQuery('7709440038')" class="chip hover:border-edge-strong transition">7709440038 · Мегаполис</button>
                 </div>
             </div>
         </div>
@@ -141,6 +142,24 @@ const STEPS = [
 let currentStep = -1;
 let enriched = null;
 let selectedIdx = 0;
+let loadTimer = null;
+
+async function fetchWithTimeout(url, ms = 180000) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), ms);
+    try {
+        const res = await fetch(url, { signal: ctrl.signal });
+        return res;
+    } finally {
+        clearTimeout(t);
+    }
+}
+
+function emailBadge(c) {
+    if (c.is_verified) return `<span class="chip chip-verified">MX OK</span>`;
+    if (c.email_badge) return `<span class="chip">${c.email_badge}</span>`;
+    return `<span class="chip">Не проверен</span>`;
+}
 
 // ---------- stepper ----------
 function renderStepper() {
@@ -214,9 +233,16 @@ async function runAgent(e) {
 
         currentStep = 1; renderStepper();
         setAgentStatus(`агент выполняет шаг 2 из ${STEPS.length}`, true);
-        const pending = logLine(`запрос в DaData: ${q}`, 'run');
+        const pending = logLine(`сбор данных: ${q} — обычно 60–90 сек`, 'run');
+        let elapsed = 0;
+        loadTimer = setInterval(() => {
+            elapsed += 5;
+            pending.textContent = `сбор данных: ${q} — ${elapsed} сек…`;
+        }, 5000);
 
-        const res = await fetch(`/api/copilot/enrich-company?inn=${encodeURIComponent(q)}`);
+        const res = await fetchWithTimeout(`/api/copilot/enrich-company?query=${encodeURIComponent(q)}`);
+        clearInterval(loadTimer);
+        loadTimer = null;
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
             throw new Error(err.detail || 'Компания не найдена');
@@ -257,15 +283,20 @@ async function runAgent(e) {
 
         currentStep = 6; renderStepper();
         setAgentStatus('готово · 6 из 6', false);
-        if (enriched.sources_status_note) toast(enriched.sources_status_note);
+        if (enriched.cache_hit) toast('Результат из кэша — мгновенный повтор для демо');
+        else if (enriched.sources_status_note) toast(enriched.sources_status_note);
 
     } catch (err) {
+        if (loadTimer) { clearInterval(loadTimer); loadTimer = null; }
         setAgentStatus('ошибка', false);
-        logLine(String(err.message || err), 'run');
+        const msg = err.name === 'AbortError'
+            ? 'Превышено время ожидания (3 мин). Попробуйте demo-ИНН 0278181110 или повторите позже.'
+            : (err.message || String(err));
+        logLine(msg, 'run');
         document.getElementById('results').innerHTML =
             `<div class="card p-5 border-edge">
                 <div class="text-[15px] font-semibold mb-1">Не удалось собрать карту</div>
-                <p class="text-[13px] text-ink-dim">${err.message || err}</p>
+                <p class="text-[13px] text-ink-dim">${msg}</p>
              </div>`;
     } finally {
         document.getElementById('runBtn').disabled = false;
@@ -369,7 +400,7 @@ function renderContacts(lprs) {
                 <span class="mono text-[11px] ${free ? 'text-ink-dim' : 'text-locked'} truncate">${c.email || '—'}</span>
                 <span class="mono text-[11px] ${free ? 'text-ink-dim' : 'text-locked'} truncate hidden sm:inline">${c.phone || '—'}</span>
             </div>
-            ${free ? `<span class="chip chip-verified">SMTP OK</span>` : `<span class="mono text-[11px] text-ink-mute">заблокировано</span>`}
+            ${free ? emailBadge(c) : `<span class="mono text-[11px] text-ink-mute">заблокировано</span>`}
         </div>`;
     }).join('');
 
@@ -423,7 +454,7 @@ function selectPerson(i) {
     const who = document.getElementById('pitchWho');
     const text = document.getElementById('pitchText');
     if (who) who.textContent = `${p.name && p.name !== '—' ? p.name : p.role} · ${p.power_type || ''}`;
-    if (text) text.textContent = p.custom_pitch || 'Питч будет сгенерирован после разблокировки контактов.';
+    if (text) text.textContent = p.custom_pitch || 'Питч для этой роли будет сгенерирован.';
 }
 
 function add(html) {

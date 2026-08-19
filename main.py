@@ -3,6 +3,7 @@ import json
 import re
 import csv
 import io
+import time
 import requests
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException, Query, Body, Response
@@ -10,7 +11,15 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
-from scraper import ProfessionalNetworkScraper, ProfileDorkResolver
+from scraper import ProfessionalNetworkScraper, ProfileDorkResolver, ContactEnrichmentEngine
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+import demo_mode
 
 app = FastAPI(title="AI Sales Copilot Production Pilot")
 
@@ -38,18 +47,18 @@ def call_gemini_llm(prompt: str, fallback_text: str) -> str:
     if not GEMINI_API_KEY:
         return fallback_text
     
-    models = ["gemini-3.1-flash-lite", "gemini-3.6-flash"]
+    models = ["gemini-2.0-flash", "gemini-1.5-flash"]
     for model_name in models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": 0.4,
-                "maxOutputTokens": 250
+                "maxOutputTokens": 280
             }
         }
         try:
-            resp = requests.post(url, json=payload, timeout=2.5)
+            resp = requests.post(url, json=payload, timeout=8)
             if resp.status_code == 200:
                 data = resp.json()
                 text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
@@ -66,10 +75,10 @@ def call_gemini_llm(prompt: str, fallback_text: str) -> str:
 # --------------------------------------------------------------------------
 
 class SellerProductProfile(BaseModel):
-    product_name: str = "AI Sales Copilot"
-    product_description: str = "Автоматизация B2B продаж и голосовой AI-ассистент"
-    target_icp: str = "Компания с B2B отделом продаж от 5 человек, использующая CRM"
-    value_proposition: str = "Сокращает рутину менеджеров, подсказывает идеальный скрипт во время разговора и поднимает конверсию сделок на 25-30%"
+    product_name: str = "1С: внедрение и сопровождение"
+    product_description: str = "Автоматизация учёта, доработка конфигураций 1С и проектная поддержка для B2B"
+    target_icp: str = "Средний и крупный B2B-бизнес с отделом учёта и IT"
+    value_proposition: str = "Сокращаем срок закрытия периода, снимаем техдолг 1С и закрываем проектные задачи под ключ без долгого найма"
 
 class WebsiteAnalyzeRequest(BaseModel):
     url: str
@@ -260,26 +269,42 @@ def generate_dynamic_lprs(inn: str, company_name: str, ceo_from_dadata: str, tri
         website_url=website_url,
     )
 
+    email_domain = ContactEnrichmentEngine.resolve_email_domain(website_url, clean_name)
+    if demo_mode.is_demo_mode():
+        power_map = demo_mode.apply_demo_polish(power_map, inn, company_name, email_domain)
+
     p_name = current_seller_profile.product_name
     p_val = current_seller_profile.value_proposition
 
-    # Персонализируем питчи под конкретную роль каждого участника Карты Власти
     for idx, person in enumerate(power_map):
         role = person["role"]
         name = person["name"]
         power_type = person["power_type"]
-        greet_name = name if name not in ("—", "Контакт не найден", "Руководитель") else "коллега"
-        fallback = f"Здравствуйте, {greet_name}! Мы изучили задачи компании «{clean_name}». Предлагаем решение «{p_name}» ({p_val}). Подскажите, когда вам удобно провести 10-минутное демо?"
-        
-        if idx == 1:
-            prompt = f"Напиши персональный B2B-питч (3 емких предложения) для первого контакта в Telegram с {greet_name} ({role}, тип влияния: {power_type}) компании «{clean_name}». Мы предлагаем «{p_name}». Ценность: {p_val}. Специфика триггера: {trigger_info}."
-            person["custom_pitch"] = call_gemini_llm(prompt, fallback)
-        elif idx == 0:
-            person["custom_pitch"] = f"Здравствуйте, {greet_name}! Обратил внимание на масштабирование компании «{clean_name}». Наша команда предлагает решение «{p_name}» ({p_val}), позволяющее исключить издержки учета и ускорить запуск новых процессов. Готовы показать результаты на 10-минутной встрече?"
-        elif idx == 2:
-            person["custom_pitch"] = f"Приветствую! Вижу текущие задачи по развитию и доработке 1С в «{clean_name}». Мы специализируемся на снятии техдолга, оптимизации тяжелых запросов и поддержке 1С:ERP под ключ, чтобы разгрузить вашу команду. Созвонимся на 10 минут?"
-        else:
-            person["custom_pitch"] = f"Здравствуйте! Увидел открытую потребность в специалистах 1С для «{clean_name}». Мы помогаем компаниям закрывать проектные задачи по 1С под ключ без необходимости долгих поисков и онбординга людей в штат. Готовы обсудить детали?"
+        greet = name if name not in ("—", "Контакт не найден", "Руководитель") else "коллега"
+
+        fallbacks = [
+            f"Здравствуйте, {greet}! Обратил внимание на масштабирование «{clean_name}». "
+            f"Предлагаем «{p_name}» ({p_val}). Готовы показать результат на 10-минутной встрече?",
+            f"Здравствуйте, {greet}! Изучили задачи «{clean_name}». Предлагаем «{p_name}» ({p_val}). "
+            f"Когда удобно провести 10-минутное демо?",
+            f"Приветствую, {greet}! Вижу задачи по 1С в «{clean_name}». "
+            f"Снимаем техдолг и поддерживаем 1С:ERP под ключ. Созвонимся на 10 минут?",
+            f"Здравствуйте, {greet}! Видим потребность в специалистах 1С в «{clean_name}». "
+            f"Закрываем проектные задачи под ключ без долгого найма. Обсудим детали?",
+        ]
+        prompts = [
+            None,
+            f"Напиши персональный B2B-питч (3 ёмких предложения) для первого контакта в Telegram с {greet} "
+            f"({role}, тип влияния: {power_type}) компании «{clean_name}». Продукт: «{p_name}». "
+            f"Ценность: {p_val}. Триггер: {trigger_info}.",
+            f"Напиши B2B-питч (3 предложения) для IT / 1С-лида {greet} ({role}) компании «{clean_name}». "
+            f"Продукт: «{p_name}». Фокус: техдолг и стабильность 1С.",
+            f"Напиши B2B-питч (3 предложения) для HR {greet} ({role}) компании «{clean_name}». "
+            f"Продукт: «{p_name}». Фокус: закрытие задач без долгого найма.",
+        ]
+        fb = fallbacks[min(idx, len(fallbacks) - 1)]
+        pr = prompts[min(idx, len(prompts) - 1)]
+        person["custom_pitch"] = call_gemini_llm(pr, fb) if pr else fb
 
     return power_map
 
@@ -380,7 +405,7 @@ def export_prospects_csv(product_keyword: str = Query("1С")):
                 l.get("identity_source", l.get("source", "")),
                 c.get("phone", ""),
                 c.get("email", ""),
-                c.get("email_status", "250 OK • Verified"),
+                c.get("email_status", "Не проверен"),
                 profile_url,
                 l.get("profile_confidence", 0),
                 profile_found,
@@ -542,9 +567,46 @@ class CRMDealRequest(BaseModel):
     lead_score: int
     selected_lpr: Optional[str] = None
 
+@app.get("/api/copilot/demo-companies")
+def copilot_demo_companies():
+    """Рекомендованные компании для живого демо."""
+    return {"demo_mode": demo_mode.is_demo_mode(), "companies": demo_mode.demo_company_chips()}
+
+
+@app.get("/api/copilot/resolve-query")
+def copilot_resolve_query(q: str = Query(..., description="ИНН, сайт или название")):
+    try:
+        inn = demo_mode.resolve_company_query(q, lambda query: search_company(query=query))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"query": q, "inn": inn}
+
+
 @app.get("/api/copilot/enrich-company")
-def enrich_company_profile(inn: str = Query(..., description="ИНН компании")):
-    dadata_res = search_company(query=inn)
+def enrich_company_profile(
+    inn: str = Query("", description="ИНН компании (legacy)"),
+    query: str = Query("", description="ИНН, сайт или название компании"),
+    refresh: bool = Query(False, description="Пропустить кэш"),
+):
+    raw = (query or inn).strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Укажите ИНН, сайт или название компании")
+
+    try:
+        resolved_inn = demo_mode.resolve_company_query(
+            raw, lambda q: search_company(query=q)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    if not refresh:
+        cached = demo_mode.cache_get(resolved_inn)
+        if cached:
+            cached = dict(cached)
+            cached["cache_hit"] = True
+            return cached
+
+    dadata_res = search_company(query=resolved_inn)
     
     if not dadata_res.get("suggestions"):
         raise HTTPException(status_code=404, detail="Компания не найдена в базе DaData")
@@ -564,7 +626,7 @@ def enrich_company_profile(inn: str = Query(..., description="ИНН компа�
         ceo_name = "Управляющий директор"
         
     company_info = {
-        "inn": data.get("inn") or inn,
+        "inn": data.get("inn") or resolved_inn,
         "kpp": data.get("kpp") or "-",
         "ogrn": data.get("ogrn") or "-",
         "name": value,
@@ -619,10 +681,13 @@ def enrich_company_profile(inn: str = Query(..., description="ИНН компа�
         else "Core-режим: DaData, HH вакансии, сайт, TenChat/Setka public verify."
     )
 
-    return {
+    result = {
         "seller_product_profile": current_seller_profile,
         "dadata_legal_profile": company_info,
         "sources_status_note": sources_note,
+        "demo_mode": demo_mode.is_demo_mode(),
+        "cache_hit": False,
+        "query_resolved": {"input": raw, "inn": resolved_inn},
         "lpr_matrix": {
             "total_lprs": len(lpr_list),
             "lprs": lpr_list
@@ -641,6 +706,8 @@ def enrich_company_profile(inn: str = Query(..., description="ИНН компа�
             ]
         }
     }
+    demo_mode.cache_set(resolved_inn, result)
+    return result
 
 @app.post("/api/crm/create-deal")
 def create_crm_deal(deal: CRMDealRequest):

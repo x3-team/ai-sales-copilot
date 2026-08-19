@@ -25,6 +25,26 @@ class ContactEnrichmentEngine:
     }
 
     @classmethod
+    def domain_from_website(cls, website_url: Optional[str]) -> str:
+        """Extract bare domain from company website URL."""
+        if not website_url:
+            return ""
+        domain = website_url.lower().strip()
+        domain = re.sub(r"^https?://", "", domain)
+        domain = domain.split("/")[0].split("?")[0].strip()
+        if domain.startswith("www."):
+            domain = domain[4:]
+        return domain if "." in domain else ""
+
+    @classmethod
+    def resolve_email_domain(cls, website_url: Optional[str], company_name: str) -> str:
+        domain = cls.domain_from_website(website_url)
+        if domain:
+            return domain
+        clean = (company_name or "company").replace("ООО", "").replace("ПАО", "").strip(' "')
+        return cls.transliterate(clean) + ".ru"
+
+    @classmethod
     def transliterate(cls, text: str) -> str:
         res = []
         for char in text.lower():
