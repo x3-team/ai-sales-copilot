@@ -440,6 +440,16 @@ class IdentityLayer:
         candidates.extend(TenChatCompanyParser.discover(clean, inn))
 
         try:
+            from tenchat_auth import TenChatAuthClient
+            if TenChatAuthClient.is_configured():
+                for role_hint in ("директор", "1с", "hr"):
+                    candidates.extend(
+                        TenChatAuthClient.discover_candidates_for_company(clean, role_hint, limit=5)
+                    )
+        except Exception:
+            pass
+
+        try:
             from scraper import ProfessionalNetworkScraper
             for vac in ProfessionalNetworkScraper.scrape_habr_career_vacancies(product_domain or clean, limit=4):
                 if cls._company_similar(vac.get("company_name", ""), clean):

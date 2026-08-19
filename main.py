@@ -420,6 +420,13 @@ def export_prospects_csv(product_keyword: str = Query("1С")):
 # 5. SINGLE COMPANY ENRICHMENT API
 # --------------------------------------------------------------------------
 
+@app.get("/api/copilot/tenchat-status")
+def tenchat_session_status():
+    """Проверка авторизованной сессии TenChat (без вывода токенов)."""
+    from tenchat_auth import TenChatAuthClient
+    return TenChatAuthClient.session_status()
+
+
 @app.get("/api/copilot/discover-identity")
 def discover_identity(
     company: str = Query(..., description="Название компании"),
