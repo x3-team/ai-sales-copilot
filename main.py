@@ -652,767 +652,104 @@ def create_crm_deal(deal: CRMDealRequest):
     }
 
 # --------------------------------------------------------------------------
-# 6. FRONTEND PRODUCTION PILOT UI & PROMO LANDING ROUTES
+# 6. FRONTEND: LANDING, WORKSPACE, LEGAL PAGES
 # --------------------------------------------------------------------------
+
+BRAND_NAME = "Sales Copilot"
+TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
+
+_INCLUDE_RE = re.compile(r"<!--\s*include:\s*([\w./-]+)\s*-->")
+
+
+def render_template(relative_path: str, **context) -> str:
+    """Читает шаблон, подставляет партиалы `<!-- include: x.html -->` и плейсхолдеры."""
+    path = os.path.join(TEMPLATES_DIR, relative_path)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Страница не найдена")
+
+    with open(path, "r", encoding="utf-8") as f:
+        html = f.read()
+
+    def _inject(match: "re.Match") -> str:
+        partial = os.path.join(TEMPLATES_DIR, "partials", match.group(1))
+        if not os.path.exists(partial):
+            return ""
+        with open(partial, "r", encoding="utf-8") as pf:
+            return pf.read()
+
+    html = _INCLUDE_RE.sub(_inject, html)
+    html = html.replace("{{BRAND}}", BRAND_NAME)
+    for key, value in context.items():
+        html = html.replace("{{" + key + "}}", str(value))
+    return html
+
+
+LEGAL_PAGES = {
+    "privacy":       ("Политика конфиденциальности", "19 августа 2026"),
+    "terms":         ("Условия использования", "19 августа 2026"),
+    "personal-data": ("Обработка персональных данных", "19 августа 2026"),
+    "offer":         ("Публичная оферта", "19 августа 2026"),
+    "cookies":       ("Файлы cookie", "19 августа 2026"),
+    "security":      ("Безопасность", "19 августа 2026"),
+    "sources":       ("Источники данных", "19 августа 2026"),
+    "contacts":      ("Контакты", "19 августа 2026"),
+}
+
+
+def render_legal(slug: str) -> str:
+    title, updated = LEGAL_PAGES[slug]
+    content = render_template(os.path.join("legal", f"{slug}.html"))
+    return render_template("legal_base.html", TITLE=title, UPDATED=updated, CONTENT=content)
+
 
 @app.get("/", response_class=HTMLResponse)
 def get_landing_page():
-    """
-    Главная страница: Промо-лендинг продукта (для презентации клиентам и модерации dev.hh.ru)
-    """
-    landing_path = os.path.join(os.path.dirname(__file__), "templates", "landing.html")
-    if os.path.exists(landing_path):
-        with open(landing_path, "r", encoding="utf-8") as f:
-            return f.read()
-    return "<h1>AI Sales Copilot Landing</h1>"
+    """Промо-лендинг: карта власти компании и проверенные контакты ЛПР."""
+    return render_template("landing.html")
 
-@app.get("/privacy", response_class=HTMLResponse)
-def get_privacy_page():
-    privacy_path = os.path.join(os.path.dirname(__file__), "templates", "privacy.html")
-    if os.path.exists(privacy_path):
-        with open(privacy_path, "r", encoding="utf-8") as f:
-            return f.read()
-    return "<h1>Политика конфиденциальности</h1>"
-
-@app.get("/terms", response_class=HTMLResponse)
-def get_terms_page():
-    terms_path = os.path.join(os.path.dirname(__file__), "templates", "terms.html")
-    if os.path.exists(terms_path):
-        with open(terms_path, "r", encoding="utf-8") as f:
-            return f.read()
-    return "<h1>Условия использования</h1>"
 
 @app.get("/app", response_class=HTMLResponse)
-def get_demo_ui():
-    """
-    Рабочий кабинет / Интерактивный генератор клиентов
-    """
-    return """
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Sales Copilot — Пилотный Релиз</title>
+def get_workspace_ui():
+    """Рабочий кабинет: пошаговый прогон агента по компании."""
+    return render_template("app.html")
 
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
 
-    <style>
-        body {
-            background-color: #f3f5f9;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            color: #2b3445;
-        }
-        .navbar-custom {
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-            padding: 1rem 0;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-        }
-        .card-custom {
-            border: 1px solid rgba(0,0,0,0.06);
-            border-radius: 16px;
-            box-shadow: 0 6px 16px rgba(0,0,0,0.03);
-            background: #ffffff;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-        .card-custom:hover {
-            box-shadow: 0 10px 24px rgba(0,0,0,0.06);
-        }
-        .badge-source {
-            font-size: 0.72rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.6px;
-            padding: 0.4em 0.8em;
-            border-radius: 8px;
-        }
-        .badge-dadata { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
-        .badge-setka { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
-        .badge-hh { background: #ffe4e6; color: #9f1239; border: 1px solid #fecdd3; }
-        .badge-ai { background: #f3e8ff; color: #6b21a8; border: 1px solid #e9d5ff; }
-        .badge-gemini { background: #e0e7ff; color: #4338ca; border: 1px solid #c7d2fe; }
-        
-        .score-circle {
-            width: 64px;
-            height: 64px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 800;
-            font-size: 1.25rem;
-            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-        }
-        .lpr-card {
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 1.25rem;
-            background: #ffffff;
-            transition: all 0.2s ease;
-        }
-        .lpr-card.active {
-            border-color: #3b82f6;
-            background: #f0f9ff;
-            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
-        }
-        .pitch-box {
-            background: #f8fafc;
-            border-left: 4px solid #3b82f6;
-            border-radius: 0 12px 12px 0;
-            padding: 1.25rem;
-        }
-        .seller-badge-bar {
-            background: #ffffff;
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 0.75rem 1.25rem;
-        }
-        .nav-pills .nav-link {
-            border-radius: 10px;
-            font-weight: 600;
-            padding: 0.6rem 1.2rem;
-            color: #475569;
-        }
-        .nav-pills .nav-link.active {
-            background-color: #0d6efd;
-        }
-        .sources-banner {
-            border-radius: 12px;
-            border: 1px solid #bfdbfe;
-            background: linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%);
-        }
-        .sources-banner.tenchat-off {
-            border-color: #fde68a;
-            background: linear-gradient(135deg, #fffbeb 0%, #eff6ff 100%);
-        }
-        .source-chip {
-            font-size: 0.72rem;
-            font-weight: 600;
-            padding: 0.25rem 0.55rem;
-            border-radius: 999px;
-            border: 1px solid #e2e8f0;
-            background: #fff;
-        }
-        .source-chip.ok { color: #047857; border-color: #a7f3d0; background: #ecfdf5; }
-        .source-chip.warn { color: #b45309; border-color: #fde68a; background: #fffbeb; }
-    </style>
-</head>
-<body>
+@app.get("/privacy", response_class=HTMLResponse)
+def page_privacy():
+    return render_legal("privacy")
 
-    <!-- Шапка -->
-    <nav class="navbar navbar-dark navbar-custom mb-4">
-        <div class="container">
-            <div class="d-flex align-items-center gap-3">
-                <a class="navbar-brand d-flex align-items-center fw-bold fs-4 m-0" href="/">
-                    <span class="p-2 bg-primary text-white rounded-3 me-2 d-inline-flex align-items-center justify-content-center" style="width: 38px; height: 38px;">
-                        <i class="bi bi-robot fs-5"></i>
-                    </span>
-                    AI Sales Copilot
-                </a>
-                <a href="/" class="btn btn-outline-light btn-sm text-decoration-none px-3 py-1 rounded-pill opacity-80 hover:opacity-100">
-                    <i class="bi bi-arrow-left me-1"></i> На сайт
-                </a>
-            </div>
-            <div class="d-flex align-items-center gap-2">
-                <span class="badge badge-gemini px-3 py-2 rounded-pill fw-semibold">
-                    <i class="bi bi-stars me-1 text-primary"></i> AI Engine Active
-                </span>
-                <button class="btn btn-outline-light btn-sm fw-semibold" data-bs-toggle="modal" data-bs-target="#websiteAnalyzeModal">
-                    <i class="bi bi-globe me-1"></i> Анализ нашего сайта
-                </button>
-            </div>
-        </div>
-    </nav>
 
-    <div class="container mb-5">
+@app.get("/terms", response_class=HTMLResponse)
+def page_terms():
+    return render_legal("terms")
 
-        <!-- Статус источников данных (TenChat optional BYOS) -->
-        <div id="sourcesStatusBanner" class="sources-banner tenchat-off p-3 mb-4 shadow-sm d-none">
-            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
-                <div>
-                    <div class="fw-bold text-dark mb-1">
-                        <i class="bi bi-database-check text-primary me-1"></i>
-                        <span id="sourcesModeTitle">Identity Layer: core-режим</span>
-                    </div>
-                    <p class="text-muted small mb-2" id="sourcesModeDetail">
-                        TenChat не подключён — работаем на DaData, HH, сайте и публичном TenChat verify.
-                    </p>
-                    <div class="d-flex flex-wrap gap-2" id="sourcesChips"></div>
-                </div>
-                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#tenchatByosHelp">
-                    <i class="bi bi-plug me-1"></i> Подключить HH / TenChat (optional)
-                </button>
-            </div>
-            <div class="collapse mt-3" id="tenchatByosHelp">
-                <div class="p-3 bg-white rounded-3 border small text-muted">
-                    <strong class="text-dark">Optional BYOS — Bring Your Own Session.</strong> MVP не требует OAuth.
-                    <div class="mt-2"><strong>HH Employer API</strong> (рекомендуется для ФИО ЛПР):</div>
-                    <pre class="bg-light p-2 rounded mt-1 mb-2 small">HH_ACCESS_TOKEN=oauth_token_работодателя
-HH_USER_AGENT=AI-Sales-Copilot/1.0 (you@company.com)</pre>
-                    Регистрация приложения: <a href="https://dev.hh.ru/admin" target="_blank">dev.hh.ru/admin</a>.
-                    Нужен аккаунт работодателя + платный доступ к базе резюме.
-                    <div class="mt-2"><strong>TenChat BYOS</strong> (расширенный поиск):</div>
-                    <pre class="bg-light p-2 rounded mt-1 mb-2 small">TENCHAT_ACCESS_TOKEN=ваш_Bearer_токен
-TENCHAT_REFRESH_TOKEN=ваш_refresh_токен</pre>
-                    DevTools → Network → tenchat.ru → Authorization: Bearer ...
-                </div>
-            </div>
-        </div>
-        
-        <!-- Информационная плашка продукта -->
-        <div class="seller-badge-bar mb-4 d-flex justify-content-between align-items-center flex-wrap gap-2 shadow-sm">
-            <div>
-                <span class="text-muted small fw-semibold">Ваш продукт:</span>
-                <span class="fw-bold text-dark ms-1" id="currentProdName">AI Sales Copilot</span>
-                <span class="text-muted mx-2">•</span>
-                <span class="text-muted small" id="currentProdDesc">Автоматизация B2B продаж</span>
-            </div>
-            <div class="d-flex gap-2">
-                <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#websiteAnalyzeModal">
-                    <i class="bi bi-magic me-1"></i> Сканировать сайт
-                </button>
-                <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#sellerProfileModal">
-                    <i class="bi bi-pencil-square me-1"></i> Редактировать оффер
-                </button>
-            </div>
-        </div>
 
-        <!-- Переключатель режима: Авто-поиск клиентов VS Поиск по ИНН -->
-        <ul class="nav nav-pills mb-4 bg-white p-2 rounded-4 shadow-sm" id="modeTabs" role="tablist">
-            <li class="nav-item col-6" role="presentation">
-                <button class="nav-link w-100 active d-flex align-items-center justify-content-center gap-2" id="auto-tab" data-bs-toggle="pill" data-bs-target="#auto-mode" type="button">
-                    <i class="bi bi-radar fs-5"></i> 🎯 Автономный генератор клиентов (по продукту)
-                </button>
-            </li>
-            <li class="nav-item col-6" role="presentation">
-                <button class="nav-link w-100 d-flex align-items-center justify-content-center gap-2" id="manual-tab" data-bs-toggle="pill" data-bs-target="#manual-mode" type="button">
-                    <i class="bi bi-search fs-5"></i> 🔍 Точечный поиск по ИНН компании
-                </button>
-            </li>
-        </ul>
+@app.get("/personal-data", response_class=HTMLResponse)
+def page_personal_data():
+    return render_legal("personal-data")
 
-        <div class="tab-content" id="modeTabsContent">
-            
-            <!-- РЕЖИМ 1: АВТОНОМНЫЙ ГЕНЕРАТОР КЛИЕНТОВ -->
-            <div class="tab-pane fade show active" id="auto-mode" role="tabpanel">
-                <div class="card card-custom p-4 mb-4">
-                    <div class="d-flex justify-content-between align-items-start mb-3">
-                        <div>
-                            <h5 class="fw-bold mb-1 text-dark">
-                                <i class="bi bi-cpu text-primary me-2"></i> Автономный поиск целевых клиентов для вашего оффера
-                            </h5>
-                            <p class="text-muted small mb-0">Система находит компании с активной потребностью в вашем продукте, определяет лиц, принимающих решения, и готовит персональные питчи.</p>
-                        </div>
-                        <button onclick="downloadLeadsCsv()" class="btn btn-outline-success btn-sm fw-semibold d-flex align-items-center gap-1">
-                            <i class="bi bi-file-earmark-spreadsheet"></i> Экспорт базы в CSV (Excel)
-                        </button>
-                    </div>
 
-                    <div class="row g-2">
-                        <div class="col-md-8">
-                            <input type="text" id="autoProductKeyword" class="form-control form-control-lg" placeholder="Введите ваш продукт (например: 1С, CRM, Бухгалтерия)..." value="1С">
-                        </div>
-                        <div class="col-md-4">
-                            <button onclick="runAutoProspecting()" class="btn btn-success btn-lg w-100 fw-semibold d-flex align-items-center justify-content-center gap-2">
-                                <i class="bi bi-lightning-charge-fill"></i> Сгенерировать базу клиентов
-                            </button>
-                        </div>
-                    </div>
-                </div>
+@app.get("/offer", response_class=HTMLResponse)
+def page_offer():
+    return render_legal("offer")
 
-                <div id="autoProspectLoader" class="text-center py-5 d-none">
-                    <div class="spinner-border text-primary" style="width: 3.5rem; height: 3.5rem;" role="status"></div>
-                    <h5 class="fw-semibold mt-3 text-dark">AI Сканер ищет целевые компании и формирует питчи...</h5>
-                    <p class="text-muted">Анализ сигналов спроса & Определение профилей ЛПР</p>
-                </div>
 
-                <div id="autoProspectResults" class="vstack gap-3 d-none"></div>
-            </div>
+@app.get("/cookies", response_class=HTMLResponse)
+def page_cookies():
+    return render_legal("cookies")
 
-            <!-- РЕЖИМ 2: ТОЧЕЧНЫЙ ПОИСК ПО ИНН -->
-            <div class="tab-pane fade" id="manual-mode" role="tabpanel">
-                <div class="card card-custom p-4 mb-4">
-                    <h5 class="fw-bold mb-3 text-dark">
-                        <i class="bi bi-building-check text-primary me-2"></i> Обогащение конкретной компании по ИНН
-                    </h5>
-                    <div class="row g-2">
-                        <div class="col-md-8">
-                            <input type="text" id="searchInput" class="form-control form-control-lg" placeholder="Введите ИНН или название компании..." value="7707083893">
-                        </div>
-                        <div class="col-md-4">
-                            <button onclick="runCopilotEnrichment()" class="btn btn-primary btn-lg w-100 fw-semibold">
-                                <i class="bi bi-search"></i> Обогатить и найти ЛПР
-                            </button>
-                        </div>
-                    </div>
-                </div>
 
-                <div id="loader" class="text-center py-5 d-none">
-                    <div class="spinner-border text-primary" style="width: 3.5rem; height: 3.5rem;" role="status"></div>
-                    <h5 class="fw-semibold mt-3 text-dark">Анализ профиля компании & Генерация питчей...</h5>
-                </div>
+@app.get("/security", response_class=HTMLResponse)
+def page_security():
+    return render_legal("security")
 
-                <div id="resultsContent" class="d-none">
-                    <div class="card card-custom p-4 mb-4 border-0 shadow-sm">
-                        <div class="d-flex justify-content-between align-items-start mb-3">
-                            <div>
-                                <span class="badge-source badge-ai mb-2 d-inline-block"><i class="bi bi-stars me-1"></i> AI Intelligence</span>
-                                <h3 class="fw-bold mb-0 text-dark" id="companyNameHeader">ПАО Сбербанк</h3>
-                            </div>
-                            <div class="score-circle mt-1" id="scoreCircle">88</div>
-                        </div>
-                        <ul id="triggersList" class="mb-0 ps-3 text-dark"></ul>
-                    </div>
 
-                    <div class="card card-custom p-4 mb-4">
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-people-fill text-primary me-2"></i> Карта Власти компании (Стейкхолдеры & ЛПР)</h5>
-                            <span class="badge bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-bold">4 Ключевых Контакта</span>
-                        </div>
-                        <p class="text-muted small mb-3">Влияние на сделку: от Бизнес-заказчика (CFO/CCO) и Технического эксперта (1C/IT Lead) до Инициатора (HR/PM) и Собственника (CEO).</p>
-                        <div class="row g-3" id="lprCardsContainer"></div>
+@app.get("/sources", response_class=HTMLResponse)
+def page_sources():
+    return render_legal("sources")
 
-                        <div class="pitch-box mt-4">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <span class="fw-bold text-primary" id="selectedLprRoleTitle">Персональный питч под выбранного стейкхолдера:</span>
-                                <button class="btn btn-sm btn-outline-primary" onclick="copyPitch()"><i class="bi bi-copy me-1"></i> Скопировать</button>
-                            </div>
-                            <p class="mb-0 text-dark fs-6 lh-base" id="pitchText"></p>
-                        </div>
-                        <div class="d-flex justify-content-end mt-3">
-                            <button id="crmBtn" onclick="sendToCRM()" class="btn btn-success fw-semibold"><i class="bi bi-plus-circle me-1"></i> Создать сделку в CRM</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
-        </div>
+@app.get("/contacts", response_class=HTMLResponse)
+def page_contacts():
+    return render_legal("contacts")
 
-    </div>
-
-    <!-- Модальное окно анализа сайта -->
-    <div class="modal fade" id="websiteAnalyzeModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content border-0 shadow">
-                <div class="modal-header bg-primary text-white">
-                    <h5 class="modal-title fw-bold"><i class="bi bi-globe me-2"></i>Авто-анализ вашего сайта</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body p-4">
-                    <p class="text-muted small">Введите URL вашего сайта. Наш парсер автоматически прочитает его и настроит профиль вашего продукта.</p>
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">URL вашего сайта:</label>
-                        <input type="text" id="sellerWebsiteUrl" class="form-control" placeholder="например: https://1c.ru">
-                    </div>
-                </div>
-                <div class="modal-footer bg-light">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                    <button type="button" id="analyzeSiteBtn" onclick="runWebsiteAnalysis()" class="btn btn-primary fw-semibold"><i class="bi bi-stars me-1"></i> Проанализировать</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Модальное окно ручной настройки -->
-    <div class="modal fade" id="sellerProfileModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered modal-lg">
-            <div class="modal-content border-0 shadow">
-                <div class="modal-header bg-dark text-white">
-                    <h5 class="modal-title fw-bold"><i class="bi bi-sliders me-2"></i>Настройка оффера</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body p-4">
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Название продукта:</label>
-                        <input type="text" id="sellerProductName" class="form-control">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Описание продукта:</label>
-                        <input type="text" id="sellerProductDesc" class="form-control">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Ценность для клиента:</label>
-                        <textarea id="sellerValueProp" class="form-control" rows="3"></textarea>
-                    </div>
-                </div>
-                <div class="modal-footer bg-light">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                    <button type="button" onclick="saveSellerProfile()" class="btn btn-primary fw-semibold">Сохранить</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Toast -->
-    <div class="toast-container position-fixed bottom-0 end-0 p-3">
-        <div id="liveToast" class="toast text-bg-dark border-0 shadow" role="alert">
-            <div class="d-flex">
-                <div class="toast-body" id="toastMessage">Сообщение</div>
-                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
-            </div>
-        </div>
-    </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        let currentEnrichedData = null;
-
-        async function loadSourcesStatus() {
-            try {
-                const res = await fetch('/api/copilot/sources-status');
-                const data = await res.json();
-                const banner = document.getElementById('sourcesStatusBanner');
-                const chips = document.getElementById('sourcesChips');
-                banner.classList.remove('d-none');
-
-                const tenchat = data.optional?.tenchat_auth || {};
-                const hh = data.optional?.hh_employer || {};
-                const isAuth = tenchat.authenticated;
-                const hhResume = hh.resume_access;
-                banner.className = `sources-banner p-3 mb-4 shadow-sm ${(isAuth || hhResume) ? '' : 'tenchat-off'}`;
-
-                document.getElementById('sourcesModeTitle').innerText = (isAuth || hhResume)
-                    ? 'Identity Layer: расширенный режим (BYOS активен)'
-                    : 'Identity Layer: core-режим (без OAuth cookies)';
-                document.getElementById('sourcesModeDetail').innerText = (isAuth || hhResume)
-                    ? [isAuth ? 'TenChat BYOS' : null, hhResume ? 'HH Employer API' : null].filter(Boolean).join(' + ') + ' подключены.'
-                    : 'OAuth не подключён — MVP работает на DaData, HH вакансиях, сайте и public verify.';
-
-                chips.innerHTML = '';
-                Object.values(data.core || {}).forEach(src => {
-                    const chip = document.createElement('span');
-                    chip.className = `source-chip ${src.available ? 'ok' : 'warn'}`;
-                    chip.innerHTML = `<i class="bi bi-${src.available ? 'check-circle' : 'exclamation-circle'} me-1"></i>${src.label}`;
-                    chip.title = src.detail || '';
-                    chips.appendChild(chip);
-                });
-                const hhChip = document.createElement('span');
-                hhChip.className = `source-chip ${hhResume ? 'ok' : 'warn'}`;
-                hhChip.innerHTML = `<i class="bi bi-${hhResume ? 'check-circle' : 'info-circle'} me-1"></i>HH API ${hhResume ? 'ON' : 'optional'}`;
-                hhChip.title = hh.setup || hh.message || '';
-                chips.appendChild(hhChip);
-                const tcChip = document.createElement('span');
-                tcChip.className = `source-chip ${isAuth ? 'ok' : 'warn'}`;
-                tcChip.innerHTML = `<i class="bi bi-${isAuth ? 'check-circle' : 'info-circle'} me-1"></i>TenChat BYOS ${isAuth ? 'ON' : 'optional'}`;
-                tcChip.title = tenchat.setup || tenchat.message || '';
-                chips.appendChild(tcChip);
-            } catch (e) { console.warn('sources-status', e); }
-        }
-
-        async function loadSellerProfile() {
-            try {
-                const res = await fetch('/api/seller/profile');
-                const data = await res.json();
-                document.getElementById('sellerProductName').value = data.product_name;
-                document.getElementById('sellerProductDesc').value = data.product_description;
-                document.getElementById('sellerValueProp').value = data.value_proposition;
-
-                document.getElementById('currentProdName').innerText = data.product_name;
-                document.getElementById('currentProdDesc').innerText = data.product_description;
-            } catch (e) { console.error(e); }
-        }
-
-        async function saveSellerProfile() {
-            const payload = {
-                product_name: document.getElementById('sellerProductName').value,
-                product_description: document.getElementById('sellerProductDesc').value,
-                target_icp: "B2B компании",
-                value_proposition: document.getElementById('sellerValueProp').value
-            };
-            await fetch('/api/seller/profile', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const modal = bootstrap.Modal.getInstance(document.getElementById('sellerProfileModal'));
-            modal.hide();
-            await loadSellerProfile();
-            showToast('Настройки обновлены!');
-        }
-
-        async function runWebsiteAnalysis() {
-            const url = document.getElementById('sellerWebsiteUrl').value.trim();
-            if (!url) return;
-
-            const btn = document.getElementById('analyzeSiteBtn');
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></i> Сканируем ваш сайт...';
-
-            try {
-                const res = await fetch('/api/seller/analyze-website', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: url })
-                });
-                const data = await res.json();
-
-                btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-stars me-1"></i> Проанализировать';
-
-                const modal = bootstrap.Modal.getInstance(document.getElementById('websiteAnalyzeModal'));
-                modal.hide();
-
-                await loadSellerProfile();
-                showToast(`Сайт успешно прочитан! Продукт: ${data.detected_profile.product_name}`);
-
-                document.getElementById('autoProductKeyword').value = data.suggested_prospecting_query;
-                runAutoProspecting();
-
-            } catch (e) {
-                alert('Ошибка анализа: ' + e);
-                btn.disabled = false;
-            }
-        }
-
-        function getProfileLink(person) {
-            const c = person.contacts || {};
-            return person.profile_url || c.search_link_tenchat || c.search_link_setka || c.search_link_linkedin || '#';
-        }
-
-        function getProfileBadge(person) {
-            const c = person.contacts || {};
-            const badge = c.profile_badge || '';
-            const conf = person.profile_confidence || 0;
-            if (badge === 'Verified' || conf >= 70) {
-                return `<span class="badge bg-emerald-50 text-emerald-700 border border-emerald-200 text-[9px] ms-1"><i class="bi bi-patch-check-fill me-1"></i>Verified</span>`;
-            }
-            if (badge === 'Probable' || (person.profile_resolved || c.profile_resolved) && conf >= 40) {
-                return `<span class="badge bg-amber-50 text-amber-700 border border-amber-200 text-[9px] ms-1"><i class="bi bi-link-45deg me-1"></i>Probable</span>`;
-            }
-            if (badge === 'ЕГРЮЛ') {
-                return `<span class="badge bg-slate-50 text-slate-600 border border-slate-200 text-[9px] ms-1">ЕГРЮЛ</span>`;
-            }
-            return `<span class="badge bg-slate-50 text-slate-600 border border-slate-200 text-[9px] ms-1">Smart Search</span>`;
-        }
-
-        function getIdentitySourceBadge(person) {
-            const src = person.identity_source || person.source || '';
-            if (!src) return '';
-            const short = src.length > 28 ? src.slice(0, 26) + '…' : src;
-            return `<span class="badge bg-indigo-50 text-indigo-600 border border-indigo-100 text-[8px] ms-1" title="${src}">${short}</span>`;
-        }
-
-        async function runAutoProspecting() {
-            const kw = document.getElementById('autoProductKeyword').value.trim();
-            if (!kw) return;
-
-            document.getElementById('autoProspectResults').classList.add('d-none');
-            document.getElementById('autoProspectLoader').classList.remove('d-none');
-
-            try {
-                const res = await fetch(`/api/copilot/auto-prospect?product_keyword=${encodeURIComponent(kw)}`);
-                const data = await res.json();
-
-                document.getElementById('autoProspectLoader').classList.add('d-none');
-                const container = document.getElementById('autoProspectResults');
-                container.classList.remove('d-none');
-                container.innerHTML = '';
-
-                data.prospects.forEach(p => {
-                    const comp = p.company_info;
-                    const card = document.createElement('div');
-                    card.className = 'card card-custom p-4';
-                    
-                    let lprsHtml = '';
-                    p.target_lprs.forEach(l => {
-                        const pType = l.power_type ? l.power_type : 'ЛПР';
-                        const c = l.contacts || {};
-                        const profileHref = getProfileLink(l);
-                        const linkedinHref = (c.search_link_linkedin && c.profile_resolved) ? c.search_link_linkedin : null;
-                        lprsHtml += `
-                            <div class="p-2 bg-white border rounded mb-2 shadow-sm">
-                                <div class="d-flex justify-content-between align-items-center">
-                                    <div>
-                                        <span class="badge bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] me-1 font-bold">[${pType}]</span>
-                                        <strong class="text-dark">${l.name === '—' || l.name === 'Контакт не найден' ? l.role.split('(')[0] : l.name}</strong> <span class="text-muted small">(${l.role})</span>
-                                        ${getProfileBadge(l)} ${getIdentitySourceBadge(l)}
-                                    </div>
-                                    <div class="small">
-                                        <a href="${profileHref}" target="_blank" class="text-decoration-none me-2 text-primary font-semibold"><i class="bi bi-box-arrow-up-right me-1"></i>Профиль</a>
-                                        ${linkedinHref ? `<a href="${linkedinHref}" target="_blank" class="text-decoration-none me-2 text-primary font-semibold"><i class="bi bi-linkedin me-1"></i>LI</a>` : ''}
-                                        <a href="https://t.me/${(c.telegram || '').replace('@','')}" target="_blank" class="text-decoration-none text-info font-semibold"><i class="bi bi-telegram me-1"></i>TG</a>
-                                    </div>
-                                </div>
-                                <div class="d-flex flex-wrap gap-3 small text-muted mt-1 font-mono items-center">
-                                    <span><i class="bi bi-envelope-at me-1 text-indigo-600"></i><strong class="text-dark">${c.email}</strong></span>
-                                    <span class="badge bg-emerald-50 text-emerald-700 border border-emerald-200 text-[9px]"><i class="bi bi-check-circle-fill me-1"></i>250 OK • SMTP Verified</span>
-                                    <span><i class="bi bi-telephone me-1 text-slate-500"></i>${c.phone}</span>
-                                </div>
-                            </div>
-                        `;
-                    });
-
-                    card.innerHTML = `
-                        <div class="d-flex justify-content-between align-items-start mb-2">
-                            <div>
-                                <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-20 mb-2 fw-bold"><i class="bi bi-check2-circle me-1"></i> Подтвержденный сигнал потребности</span>
-                                <h4 class="fw-bold text-dark mb-1">${comp.company_name}</h4>
-                                <div class="text-muted small">ИНН: ${comp.inn} • Штат: ~${comp.employee_count} чел. • Выручка: ${comp.revenue}</div>
-                            </div>
-                            <button onclick="setQuery('${comp.inn}'); switchTab('manual-tab');" class="btn btn-outline-primary fw-semibold"><i class="bi bi-box-arrow-up-right me-1"></i> Карта Власти компании</button>
-                        </div>
-                        <p class="text-dark small mb-2"><strong>Триггер потребности:</strong> ${comp.match_reason}</p>
-                        <div class="mb-3"><strong>Карта Власти & Контакты:</strong><div class="mt-2">${lprsHtml}</div></div>
-                        <div class="p-3 bg-light rounded-3 border-start border-3 border-primary">
-                            <div class="fw-bold text-primary small mb-1"><i class="bi bi-stars me-1"></i> Персонализированный питч под ЛПР:</div>
-                            <div class="small text-dark lh-base">${p.ai_pitch_preview}</div>
-                        </div>
-                    `;
-                    container.appendChild(card);
-                });
-
-            } catch (e) {
-                alert('Ошибка авто-поиска: ' + e);
-                document.getElementById('autoProspectLoader').classList.add('d-none');
-            }
-        }
-
-        function downloadLeadsCsv() {
-            const kw = document.getElementById('autoProductKeyword').value.trim() || '1С';
-            window.location.href = `/api/copilot/export-csv?product_keyword=${encodeURIComponent(kw)}`;
-            showToast('Скачивание CSV файла началось!');
-        }
-
-        function switchTab(tabId) {
-            const btn = document.getElementById(tabId);
-            const tab = new bootstrap.Tab(btn);
-            tab.show();
-        }
-
-        function setQuery(inn) {
-            document.getElementById('searchInput').value = inn;
-            runCopilotEnrichment();
-        }
-
-        function showToast(msg) {
-            document.getElementById('toastMessage').innerText = msg;
-            new bootstrap.Toast(document.getElementById('liveToast')).show();
-        }
-
-        function copyPitch() {
-            const pitch = document.getElementById('pitchText').innerText;
-            navigator.clipboard.writeText(pitch);
-            showToast('Питч скопирован в буфер обмена!');
-        }
-
-        function selectLpr(index) {
-            const lprs = currentEnrichedData.lpr_matrix.lprs;
-            const selected = lprs[index];
-            document.getElementById('selectedLprRoleTitle').innerText = `Питч для: ${selected.name} (${selected.role})`;
-            document.getElementById('pitchText').innerText = selected.custom_pitch;
-        }
-
-        async function runCopilotEnrichment() {
-            const query = document.getElementById('searchInput').value.trim();
-            if (!query) return;
-
-            document.getElementById('resultsContent').classList.add('d-none');
-            document.getElementById('loader').classList.remove('d-none');
-
-            try {
-                const response = await fetch(`/api/copilot/enrich-company?inn=${encodeURIComponent(query)}`);
-                const data = await response.json();
-                currentEnrichedData = data;
-
-                document.getElementById('loader').classList.add('d-none');
-                document.getElementById('resultsContent').classList.remove('d-none');
-
-                document.getElementById('companyNameHeader').innerText = data.dadata_legal_profile.name;
-                document.getElementById('scoreCircle').innerText = data.sales_ai_insights.lead_score;
-
-                if (data.sources_status_note) {
-                    showToast(data.sources_status_note);
-                }
-
-                const lprContainer = document.getElementById('lprCardsContainer');
-                lprContainer.innerHTML = '';
-                data.lpr_matrix.lprs.forEach((person, idx) => {
-                    const col = document.createElement('div');
-                    col.className = 'col-md-3';
-                    const powerBadge = person.power_type ? person.power_type : 'ЛПР';
-                    const c = person.contacts || {};
-                    const profileHref = getProfileLink(person);
-                    const linkedinHref = (c.search_link_linkedin && (person.profile_resolved || c.profile_resolved)) ? c.search_link_linkedin : null;
-                    col.innerHTML = `
-                        <div class="lpr-card ${idx === 0 ? 'active' : ''}" onclick="selectLpr(${idx})">
-                            <div class="d-flex justify-content-between align-items-center mb-1">
-                                <span class="badge bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-bold">${powerBadge}</span>
-                                ${getProfileBadge(person)} ${getIdentitySourceBadge(person)}
-                            </div>
-                            <h6 class="fw-bold text-dark mb-0 text-truncate">${person.name === '—' || person.name === 'Контакт не найден' ? person.role.split('(')[0].trim() : person.name}</h6>
-                            <div class="text-primary small fw-semibold mb-2 lh-sm" style="min-height: 2.2rem;">${person.role}</div>
-                            
-                            <div class="space-y-1 text-xs border-top pt-2">
-                                <div class="text-muted text-truncate" title="${c.email}">
-                                    <i class="bi bi-envelope-at text-indigo-600 me-1"></i> <span class="fw-semibold text-dark">${c.email}</span>
-                                </div>
-                                <div class="text-[10px] text-emerald-600 font-mono">
-                                    <i class="bi bi-check-circle-fill me-1"></i>250 OK • SMTP Valid
-                                </div>
-                                <div class="text-muted text-truncate">
-                                    <i class="bi bi-telephone text-slate-500 me-1"></i> ${c.phone}
-                                </div>
-                                <div class="d-flex items-center justify-between pt-1">
-                                    <a href="${profileHref}" target="_blank" class="text-decoration-none text-primary text-[11px] fw-semibold" onclick="event.stopPropagation()">
-                                        <i class="bi bi-box-arrow-up-right me-1"></i> Профиль
-                                    </a>
-                                    ${linkedinHref ? `<a href="${linkedinHref}" target="_blank" class="text-decoration-none text-blue-700 text-[11px] fw-semibold" onclick="event.stopPropagation()"><i class="bi bi-linkedin me-1"></i> LI</a>` : ''}
-                                    <a href="https://t.me/${(c.telegram || '').replace('@','')}" target="_blank" class="text-decoration-none text-sky-600 text-[11px] fw-semibold" onclick="event.stopPropagation()">
-                                        <i class="bi bi-telegram me-1"></i> Telegram
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                    lprContainer.appendChild(col);
-                });
-                selectLpr(0);
-
-            } catch (err) {
-                alert('Ошибка: ' + err.message);
-                document.getElementById('loader').classList.add('d-none');
-            }
-        }
-
-        async function sendToCRM() {
-            if (!currentEnrichedData) return;
-            const selectedLpr = currentEnrichedData.lpr_matrix.lprs[0];
-
-            const crmBtn = document.getElementById('crmBtn');
-            crmBtn.disabled = true;
-            crmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></i> Создание сделки...';
-
-            const payload = {
-                company_name: currentEnrichedData.dadata_legal_profile.name,
-                inn: currentEnrichedData.dadata_legal_profile.inn,
-                ceo_name: currentEnrichedData.dadata_legal_profile.ceo,
-                selected_lpr: `${selectedLpr.name} (${selectedLpr.role})`,
-                pitch: selectedLpr.custom_pitch,
-                lead_score: currentEnrichedData.sales_ai_insights.lead_score
-            };
-
-            try {
-                const res = await fetch('/api/crm/create-deal', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                const result = await res.json();
-                crmBtn.className = 'btn btn-outline-success fw-semibold';
-                crmBtn.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i> Сделка создана!';
-                showToast(result.message);
-            } catch (e) { alert('Ошибка CRM: ' + e); crmBtn.disabled = false; }
-        }
-
-        window.onload = function() {
-            loadSourcesStatus();
-            loadSellerProfile();
-            runAutoProspecting();
-        };
-    </script>
-</body>
-</html>
-    """

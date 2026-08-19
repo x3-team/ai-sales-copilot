@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <title>Рабочий кабинет — {{BRAND}}</title>
+    <meta name="robots" content="noindex">
+    <!-- include: head.html -->
+</head>
+<body class="min-h-screen flex flex-col">
+
+<header class="border-b border-edge-subtle bg-inset sticky top-0 z-40">
+    <div class="px-5 h-[60px] flex items-center justify-between gap-4">
+        <a href="/" class="flex items-center gap-2.5 shrink-0">
+            <span class="w-6 h-6 rounded-[7px] bg-mint"></span>
+            <span class="text-[15px] font-semibold tracking-tight">{{BRAND}}</span>
+        </a>
+
+        <div id="sourceChips" class="hidden md:flex items-center gap-1.5 flex-wrap justify-center"></div>
+
+        <div class="flex items-center gap-2 shrink-0">
+            <button onclick="exportCsv()" class="btn btn-ghost !py-2 !px-3.5 !text-[13px]">Экспорт CSV</button>
+            <button onclick="openOffer()" class="btn btn-ghost !py-2 !px-3.5 !text-[13px] hidden sm:inline-flex">Мой оффер</button>
+        </div>
+    </div>
+</header>
+
+<div class="flex-1 flex">
+
+    <!-- ============ SIDEBAR ============ -->
+    <aside class="hidden lg:flex w-[272px] shrink-0 flex-col border-r border-edge-subtle bg-inset">
+        <div class="p-5 border-b border-edge-subtle">
+            <div id="agentStatus" class="flex items-center gap-2 mb-4">
+                <span class="w-1.5 h-1.5 rounded-full bg-ink-mute"></span>
+                <span class="mono text-[11px] text-ink-mute">агент ожидает запрос</span>
+            </div>
+            <div id="agentLog" class="space-y-2 scroll-thin max-h-[280px] overflow-y-auto"></div>
+        </div>
+
+        <div id="companyCard" class="p-5 border-b border-edge-subtle hidden"></div>
+
+        <div class="p-5 mt-auto">
+            <div class="mono text-[10px] uppercase tracking-[.12em] text-ink-mute mb-3">Интеграции</div>
+            <div id="integrationList" class="space-y-2"></div>
+            <a href="/sources" class="mono text-[11px] text-ink-mute hover:text-ink transition mt-4 inline-block">Все источники →</a>
+        </div>
+    </aside>
+
+    <!-- ============ MAIN ============ -->
+    <main class="flex-1 min-w-0 flex flex-col">
+
+        <!-- Stepper -->
+        <div class="border-b border-edge-subtle bg-inset px-5 py-3.5 overflow-x-auto scroll-thin">
+            <div id="stepper" class="flex items-center gap-0 min-w-[720px]"></div>
+        </div>
+
+        <!-- Query bar -->
+        <div class="px-5 sm:px-7 pt-6">
+            <form onsubmit="runAgent(event)" class="flex flex-col sm:flex-row gap-2.5 max-w-[720px]">
+                <input id="query" class="field" placeholder="ИНН компании или сайт — например 0278181110" autocomplete="off">
+                <button id="runBtn" type="submit" class="btn btn-primary whitespace-nowrap">Запустить агента</button>
+            </form>
+            <p class="mono text-[11px] text-ink-mute mt-2.5">
+                Первые 5 компаний бесплатно · данные только из открытых источников
+            </p>
+        </div>
+
+        <!-- Results -->
+        <div id="results" class="px-5 sm:px-7 py-7 space-y-6"></div>
+
+        <!-- Empty state -->
+        <div id="emptyState" class="flex-1 flex items-center justify-center px-6 py-16">
+            <div class="text-center max-w-[420px]">
+                <div class="w-11 h-11 rounded-xl bg-elevated border border-edge mx-auto mb-4 flex items-center justify-center">
+                    <span class="w-2 h-2 rounded-full bg-mint"></span>
+                </div>
+                <h2 class="text-[18px] font-semibold mb-2">Введите ИНН, чтобы собрать карту власти</h2>
+                <p class="text-[13px] leading-relaxed text-ink-dim mb-5">
+                    Агент найдёт CEO, бизнес-заказчика, технического эксперта и инициатора закупки,
+                    проверит профили и покажет источник каждого контакта.
+                </p>
+                <div class="flex flex-wrap gap-2 justify-center">
+                    <button onclick="setQuery('0278181110')" class="chip hover:border-edge-strong transition">0278181110 · ПР-Лизинг</button>
+                    <button onclick="setQuery('7707083893')" class="chip hover:border-edge-strong transition">7707083893 · Сбербанк</button>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<!-- ============ OFFER MODAL ============ -->
+<div id="offerModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+    <div class="card w-full max-w-[520px] p-6">
+        <div class="flex items-start justify-between mb-5">
+            <div>
+                <h3 class="text-[17px] font-semibold">Ваш оффер</h3>
+                <p class="text-[13px] text-ink-mute mt-0.5">Под него агент подбирает компании и пишет питчи</p>
+            </div>
+            <button onclick="closeOffer()" class="text-ink-mute hover:text-ink transition text-[18px] leading-none">×</button>
+        </div>
+
+        <div class="space-y-3.5">
+            <div>
+                <label class="mono text-[10px] uppercase tracking-[.12em] text-ink-mute block mb-1.5">Сайт для автозаполнения</label>
+                <div class="flex gap-2">
+                    <input id="offerSite" class="field" placeholder="https://umsol.ru">
+                    <button onclick="analyzeSite()" id="analyzeBtn" class="btn btn-ghost whitespace-nowrap">Сканировать</button>
+                </div>
+            </div>
+            <div>
+                <label class="mono text-[10px] uppercase tracking-[.12em] text-ink-mute block mb-1.5">Продукт</label>
+                <input id="offerName" class="field">
+            </div>
+            <div>
+                <label class="mono text-[10px] uppercase tracking-[.12em] text-ink-mute block mb-1.5">Описание</label>
+                <input id="offerDesc" class="field">
+            </div>
+            <div>
+                <label class="mono text-[10px] uppercase tracking-[.12em] text-ink-mute block mb-1.5">Ценность для клиента</label>
+                <textarea id="offerValue" rows="3" class="field resize-none"></textarea>
+            </div>
+        </div>
+
+        <div class="flex justify-end gap-2 mt-6">
+            <button onclick="closeOffer()" class="btn btn-ghost">Отмена</button>
+            <button onclick="saveOffer()" class="btn btn-primary">Сохранить</button>
+        </div>
+    </div>
+</div>
+
+<div id="toast" class="fixed bottom-5 right-5 z-50 hidden card px-4 py-3 text-[13px] max-w-[340px]"></div>
+
+<script>
+const STEPS = [
+    { id: 'profile',   label: 'Профиль компании' },
+    { id: 'targets',   label: 'Реквизиты' },
+    { id: 'signals',   label: 'Сигналы спроса' },
+    { id: 'powermap',  label: 'Карта власти' },
+    { id: 'verify',    label: 'Верификация' },
+    { id: 'pitches',   label: 'Питчи' }
+];
+
+let currentStep = -1;
+let enriched = null;
+let selectedIdx = 0;
+
+// ---------- stepper ----------
+function renderStepper() {
+    const el = document.getElementById('stepper');
+    el.innerHTML = STEPS.map((s, i) => {
+        const done = i < currentStep;
+        const active = i === currentStep;
+        const node = active
+            ? `<div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-mint-bg border border-edge-accent shrink-0">
+                   <span class="w-1.5 h-1.5 rounded-full bg-mint pulse"></span>
+                   <span class="mono text-[10px] text-mint">${i + 1}</span>
+                   <span class="text-[12px] font-medium whitespace-nowrap">${s.label}</span>
+               </div>`
+            : `<div class="w-6 h-6 rounded-full flex items-center justify-center shrink-0 border ${done ? 'bg-mint-bg border-edge-accent' : 'bg-surface border-edge'}">
+                   <span class="mono text-[10px] ${done ? 'text-mint' : 'text-ink-mute'}">${done ? '✓' : i + 1}</span>
+               </div>`;
+        const line = i < STEPS.length - 1
+            ? `<div class="flex-1 h-px min-w-[24px] ${i < currentStep ? 'bg-edge-accent' : 'bg-edge-subtle'}"></div>`
+            : '';
+        return node + line;
+    }).join('');
+}
+
+// ---------- agent log ----------
+function setAgentStatus(text, active) {
+    document.getElementById('agentStatus').innerHTML =
+        `<span class="w-1.5 h-1.5 rounded-full ${active ? 'bg-mint pulse' : 'bg-ink-mute'}"></span>
+         <span class="mono text-[11px] ${active ? 'text-mint' : 'text-ink-mute'}">${text}</span>`;
+}
+
+function logLine(text, state) {
+    const log = document.getElementById('agentLog');
+    const icon = state === 'done' ? '✓' : '›';
+    const cls = state === 'done' ? 'text-ink-mute' : 'text-ink';
+    const row = document.createElement('div');
+    row.className = 'flex gap-2 fade-up';
+    row.innerHTML = `<span class="mono text-[11px] ${state === 'done' ? 'text-mint' : 'text-mint'}">${icon}</span>
+                     <span class="mono text-[11px] ${cls} leading-relaxed">${text}</span>`;
+    log.appendChild(row);
+    log.scrollTop = log.scrollHeight;
+    return row;
+}
+
+function resetRun() {
+    document.getElementById('agentLog').innerHTML = '';
+    document.getElementById('results').innerHTML = '';
+    document.getElementById('companyCard').classList.add('hidden');
+    currentStep = -1;
+    renderStepper();
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ---------- main run ----------
+async function runAgent(e) {
+    if (e) e.preventDefault();
+    const q = document.getElementById('query').value.trim();
+    if (!q) return;
+
+    document.getElementById('emptyState').classList.add('hidden');
+    document.getElementById('runBtn').disabled = true;
+    resetRun();
+
+    try {
+        currentStep = 0; renderStepper();
+        setAgentStatus(`агент выполняет шаг 1 из ${STEPS.length}`, true);
+        logLine('читаем ваш оффер…', 'run');
+        await sleep(320);
+        document.getElementById('agentLog').lastChild.remove();
+        logLine('оффер загружен', 'done');
+
+        currentStep = 1; renderStepper();
+        setAgentStatus(`агент выполняет шаг 2 из ${STEPS.length}`, true);
+        const pending = logLine(`запрос в DaData: ${q}`, 'run');
+
+        const res = await fetch(`/api/copilot/enrich-company?inn=${encodeURIComponent(q)}`);
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Компания не найдена');
+        }
+        enriched = await res.json();
+        pending.remove();
+
+        const legal = enriched.dadata_legal_profile;
+        logLine(`ЕГРЮЛ: ${legal.name}`, 'done');
+        renderCompanyCard(legal);
+
+        currentStep = 2; renderStepper();
+        setAgentStatus(`агент выполняет шаг 3 из ${STEPS.length}`, true);
+        const vac = enriched.hh_recruitment_profile || { vacancies: [], open_vacancies_count: 0 };
+        await sleep(260);
+        logLine(`HH.ru: ${vac.open_vacancies_count} активных вакансий`, 'done');
+        renderSignals(enriched);
+
+        currentStep = 3; renderStepper();
+        setAgentStatus(`агент выполняет шаг 4 из ${STEPS.length}`, true);
+        await sleep(260);
+        const lprs = (enriched.lpr_matrix || {}).lprs || [];
+        logLine(`карта власти: ${lprs.length} роли`, 'done');
+        renderPowerMap(lprs);
+
+        currentStep = 4; renderStepper();
+        setAgentStatus(`агент выполняет шаг 5 из ${STEPS.length}`, true);
+        await sleep(240);
+        const verifiedCount = lprs.filter(l => (l.profile_confidence || 0) >= 70).length;
+        logLine(`подтверждено профилей: ${verifiedCount}`, 'done');
+        renderContacts(lprs);
+
+        currentStep = 5; renderStepper();
+        setAgentStatus(`агент выполняет шаг 6 из ${STEPS.length}`, true);
+        await sleep(240);
+        logLine('питчи готовы', 'done');
+        renderPitch(lprs);
+
+        currentStep = 6; renderStepper();
+        setAgentStatus('готово · 6 из 6', false);
+        if (enriched.sources_status_note) toast(enriched.sources_status_note);
+
+    } catch (err) {
+        setAgentStatus('ошибка', false);
+        logLine(String(err.message || err), 'run');
+        document.getElementById('results').innerHTML =
+            `<div class="card p-5 border-edge">
+                <div class="text-[15px] font-semibold mb-1">Не удалось собрать карту</div>
+                <p class="text-[13px] text-ink-dim">${err.message || err}</p>
+             </div>`;
+    } finally {
+        document.getElementById('runBtn').disabled = false;
+    }
+}
+
+// ---------- renderers ----------
+function renderCompanyCard(legal) {
+    const el = document.getElementById('companyCard');
+    el.classList.remove('hidden');
+    const meta = [
+        legal.employee_count ? `${legal.employee_count} сотрудников` : null,
+        legal.status === 'ACTIVE' ? 'действующая' : legal.status
+    ].filter(Boolean).join(' · ');
+    el.innerHTML = `
+        <div class="text-[14px] font-semibold leading-snug mb-1.5">${legal.name}</div>
+        <div class="mono text-[11px] text-ink-mute mb-2">ИНН ${legal.inn}</div>
+        <div class="text-[12px] text-ink-dim leading-relaxed">${meta}</div>
+        ${legal.website ? `<a href="${legal.website}" target="_blank" rel="noopener" class="mono text-[11px] text-mint hover:text-mint-hover transition mt-2 inline-block">${legal.website.replace(/^https?:\/\//, '')} →</a>` : ''}
+    `;
+}
+
+function renderSignals(data) {
+    const vac = data.hh_recruitment_profile || { vacancies: [] };
+    const insights = (data.sales_ai_insights || {}).insights || [];
+    const score = (data.sales_ai_insights || {}).lead_score || 0;
+
+    const vacHtml = (vac.vacancies || []).slice(0, 4).map(v => `
+        <a href="${v.url || '#'}" target="_blank" rel="noopener" class="card card-hover p-3.5 block">
+            <div class="text-[13px] font-medium leading-snug mb-1">${v.title || 'Вакансия'}</div>
+            <div class="mono text-[11px] text-ink-mute">${v.salary || 'з/п не указана'}</div>
+        </a>`).join('');
+
+    add(`
+    <section class="fade-up">
+        <div class="flex items-center justify-between mb-3.5 flex-wrap gap-2">
+            <div>
+                <h2 class="text-[18px] font-semibold">Сигналы спроса</h2>
+                <p class="text-[13px] text-ink-dim mt-0.5">Открытые вакансии — прямой признак активной потребности</p>
+            </div>
+            <span class="chip chip-mint">Lead score ${score}</span>
+        </div>
+        ${vacHtml ? `<div class="grid sm:grid-cols-2 xl:grid-cols-4 gap-3">${vacHtml}</div>`
+                  : `<div class="card p-4 text-[13px] text-ink-dim">Активных вакансий не найдено — сигнал спроса слабый.</div>`}
+        ${insights.length ? `<ul class="mt-3.5 space-y-1.5">${insights.map(i => `<li class="text-[13px] text-ink-dim flex gap-2"><span class="text-mint shrink-0">·</span>${i}</li>`).join('')}</ul>` : ''}
+    </section>`);
+}
+
+function badgeFor(p) {
+    const conf = p.profile_confidence || 0;
+    const badge = (p.contacts || {}).profile_badge || '';
+    if (badge === 'Verified' || conf >= 70) return `<span class="chip chip-verified"><span class="w-1 h-1 rounded-full bg-verified"></span>Verified</span>`;
+    if (badge === 'ЕГРЮЛ') return `<span class="chip">ЕГРЮЛ</span>`;
+    if (p.profile_resolved || conf >= 40) return `<span class="chip chip-probable">Probable</span>`;
+    return `<span class="chip">Не подтверждён</span>`;
+}
+
+function renderPowerMap(lprs) {
+    const cards = lprs.map((p, i) => {
+        const known = p.name && p.name !== '—' && p.name !== 'Контакт не найден';
+        const title = known ? p.name : p.role.split('(')[0].trim();
+        const url = p.profile_url || (p.contacts || {}).search_link_tenchat || '#';
+        return `
+        <button onclick="selectPerson(${i})" data-person="${i}"
+                class="card card-hover p-4 text-left w-full ${i === selectedIdx ? '!border-edge-accent' : ''}">
+            <div class="flex items-center justify-between gap-2 mb-3">
+                <span class="chip">${(p.power_type || 'ЛПР').split('(')[0].trim()}</span>
+                ${badgeFor(p)}
+            </div>
+            <div class="text-[15px] font-semibold leading-snug ${known ? '' : 'text-ink-dim'}">${title}</div>
+            <div class="text-[12.5px] text-ink-dim mt-0.5 leading-snug">${p.role || ''}</div>
+            <div class="mono text-[11px] text-ink-mute mt-3 pt-3 border-t border-edge-subtle truncate" title="${p.source || ''}">
+                ${p.source || 'Identity Layer'}
+            </div>
+            <a href="${url}" target="_blank" rel="noopener" onclick="event.stopPropagation()"
+               class="mono text-[11px] text-mint hover:text-mint-hover transition mt-2 inline-block">Открыть профиль →</a>
+        </button>`;
+    }).join('');
+
+    add(`
+    <section class="fade-up">
+        <div class="mb-3.5">
+            <h2 class="text-[18px] font-semibold">Карта власти компании</h2>
+            <p class="text-[13px] text-ink-dim mt-0.5">
+                Четыре роли, которые влияют на сделку. Каждый профиль проверен по источнику — без выдуманных контактов.
+            </p>
+        </div>
+        <div class="grid sm:grid-cols-2 xl:grid-cols-4 gap-3">${cards}</div>
+    </section>`);
+}
+
+function renderContacts(lprs) {
+    const rows = lprs.map((p, i) => {
+        const c = p.contacts || {};
+        const free = i === 0;
+        const slot = (p.power_type || '').split('(')[0].trim();
+        return `
+        <div class="flex items-center gap-3 px-3.5 py-2.5 rounded-[10px] bg-inset border border-edge-subtle flex-wrap">
+            <span class="mono text-[10px] text-ink-mute w-[92px] shrink-0">${slot}</span>
+            <div class="flex items-center gap-4 flex-1 min-w-0 ${free ? '' : 'blurred'}">
+                <span class="mono text-[11px] ${free ? 'text-ink-dim' : 'text-locked'} truncate">${c.email || '—'}</span>
+                <span class="mono text-[11px] ${free ? 'text-ink-dim' : 'text-locked'} truncate hidden sm:inline">${c.phone || '—'}</span>
+            </div>
+            ${free ? `<span class="chip chip-verified">SMTP OK</span>` : `<span class="mono text-[11px] text-ink-mute">заблокировано</span>`}
+        </div>`;
+    }).join('');
+
+    add(`
+    <section class="fade-up">
+        <div class="card p-5 sm:p-6">
+            <div class="grid lg:grid-cols-[1fr_320px] gap-6 items-center">
+                <div>
+                    <h2 class="text-[17px] font-semibold mb-1">Контакты и питчи готовы</h2>
+                    <p class="text-[13px] text-ink-dim mb-4">Первый контакт открыт бесплатно — остальные после подключения тарифа.</p>
+                    <div class="space-y-2">${rows}</div>
+                </div>
+                <div class="rounded-[14px] bg-mint-bg border border-edge-accent p-5">
+                    <span class="chip !bg-mint !border-mint !text-ink-inverse mb-3">Первые 5 компаний бесплатно</span>
+                    <h3 class="text-[16px] font-semibold mb-1.5">Разблокировать контакты</h3>
+                    <p class="text-[13px] text-ink-dim leading-relaxed mb-4">
+                        Почта с SMTP-проверкой, телефоны и готовые питчи под каждую роль.
+                    </p>
+                    <a href="/#pricing" class="btn btn-primary w-full">Открыть доступ</a>
+                </div>
+            </div>
+        </div>
+    </section>`);
+}
+
+function renderPitch(lprs) {
+    add(`
+    <section class="fade-up" id="pitchSection">
+        <div class="flex items-center justify-between mb-3.5 flex-wrap gap-2">
+            <div>
+                <h2 class="text-[18px] font-semibold">Питч под выбранную роль</h2>
+                <p class="text-[13px] text-ink-dim mt-0.5" id="pitchWho"></p>
+            </div>
+            <button onclick="copyPitch()" class="btn btn-ghost !py-2 !px-3.5 !text-[13px]">Скопировать</button>
+        </div>
+        <div class="card p-5">
+            <p id="pitchText" class="text-[14px] leading-relaxed text-ink-dim whitespace-pre-line"></p>
+        </div>
+    </section>`);
+    selectPerson(0);
+}
+
+function selectPerson(i) {
+    selectedIdx = i;
+    const lprs = ((enriched || {}).lpr_matrix || {}).lprs || [];
+    const p = lprs[i];
+    if (!p) return;
+    document.querySelectorAll('[data-person]').forEach(el => {
+        el.classList.toggle('!border-edge-accent', Number(el.dataset.person) === i);
+    });
+    const who = document.getElementById('pitchWho');
+    const text = document.getElementById('pitchText');
+    if (who) who.textContent = `${p.name && p.name !== '—' ? p.name : p.role} · ${p.power_type || ''}`;
+    if (text) text.textContent = p.custom_pitch || 'Питч будет сгенерирован после разблокировки контактов.';
+}
+
+function add(html) {
+    document.getElementById('results').insertAdjacentHTML('beforeend', html);
+}
+
+// ---------- sources ----------
+async function loadSources() {
+    try {
+        const data = await (await fetch('/api/copilot/sources-status')).json();
+        const chips = document.getElementById('sourceChips');
+        const list = document.getElementById('integrationList');
+
+        chips.innerHTML = Object.values(data.core || {}).map(s =>
+            `<span class="chip ${s.available ? 'chip-mint' : ''}" title="${s.detail || ''}">${s.label}</span>`
+        ).join('');
+
+        const opt = data.optional || {};
+        list.innerHTML = Object.values(opt).map(o => {
+            const on = o.resume_access || o.authenticated;
+            return `<div class="flex items-center justify-between gap-2">
+                        <span class="text-[12px] ${on ? 'text-ink-dim' : 'text-ink-mute'}">${o.label}</span>
+                        <span class="mono text-[10px] ${on ? 'text-mint' : 'text-ink-mute'}">${on ? 'ON' : 'optional'}</span>
+                    </div>`;
+        }).join('');
+    } catch (e) { /* сеть недоступна — интерфейс работает без статусов */ }
+}
+
+// ---------- offer ----------
+async function loadOffer() {
+    try {
+        const d = await (await fetch('/api/seller/profile')).json();
+        document.getElementById('offerName').value = d.product_name || '';
+        document.getElementById('offerDesc').value = d.product_description || '';
+        document.getElementById('offerValue').value = d.value_proposition || '';
+    } catch (e) { /* профиль ещё не задан */ }
+}
+function openOffer() { document.getElementById('offerModal').classList.replace('hidden', 'flex'); }
+function closeOffer() { document.getElementById('offerModal').classList.replace('flex', 'hidden'); }
+
+async function saveOffer() {
+    await fetch('/api/seller/profile', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            product_name: document.getElementById('offerName').value,
+            product_description: document.getElementById('offerDesc').value,
+            target_icp: 'B2B компании',
+            value_proposition: document.getElementById('offerValue').value
+        })
+    });
+    closeOffer();
+    toast('Оффер обновлён');
+}
+
+async function analyzeSite() {
+    const url = document.getElementById('offerSite').value.trim();
+    if (!url) return;
+    const btn = document.getElementById('analyzeBtn');
+    btn.disabled = true; btn.textContent = 'Сканируем…';
+    try {
+        const d = await (await fetch('/api/seller/analyze-website', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url })
+        })).json();
+        await loadOffer();
+        toast(`Сайт прочитан: ${(d.detected_profile || {}).product_name || ''}`);
+    } catch (e) {
+        toast('Не удалось прочитать сайт');
+    } finally {
+        btn.disabled = false; btn.textContent = 'Сканировать';
+    }
+}
+
+// ---------- misc ----------
+function setQuery(v) { document.getElementById('query').value = v; runAgent(); }
+function exportCsv() { window.location.href = '/api/copilot/export-csv?product_keyword=1С'; }
+function copyPitch() {
+    const t = document.getElementById('pitchText');
+    if (t) { navigator.clipboard.writeText(t.textContent); toast('Питч скопирован'); }
+}
+function toast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.classList.add('hidden'), 3600);
+}
+
+renderStepper();
+loadSources();
+loadOffer();
+
+const initial = new URLSearchParams(location.search).get('q');
+if (initial) { document.getElementById('query').value = initial; runAgent(); }
+</script>
+</body>
+</html>

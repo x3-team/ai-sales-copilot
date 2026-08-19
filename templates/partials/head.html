@@ -1,0 +1,67 @@
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0A0A0B">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+    tailwind.config = {
+        theme: {
+            extend: {
+                colors: {
+                    canvas:   '#0A0A0B',
+                    surface:  '#131316',
+                    elevated: '#1A1A1F',
+                    inset:    '#0E0E10',
+                    edge:     { subtle: '#1F1F25', DEFAULT: '#2A2A32', strong: '#3A3A45', accent: '#0C6B4D' },
+                    ink:      { DEFAULT: '#FAFAFA', dim: '#A2A2AD', mute: '#6E6E7A', inverse: '#08110D' },
+                    mint:     { DEFAULT: '#00D492', hover: '#22E8A9', dim: '#0C8F66', bg: '#04291F' },
+                    verified: '#34D399',
+                    probable: '#FBBF24',
+                    locked:   '#7A7A88'
+                },
+                fontFamily: {
+                    sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+                    mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace']
+                },
+                borderRadius: { xl: '12px', '2xl': '16px' }
+            }
+        }
+    }
+</script>
+<style>
+    body { background-color: #0A0A0B; color: #FAFAFA; font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    ::selection { background: #00D492; color: #08110D; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .card { background: #131316; border: 1px solid #1F1F25; border-radius: 12px; }
+    .card-hover { transition: border-color .18s ease, transform .18s ease; }
+    .card-hover:hover { border-color: #2A2A32; transform: translateY(-1px); }
+    .chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 999px; font-size: 10px;
+            font-family: 'JetBrains Mono', monospace; font-weight: 500; letter-spacing: .04em; border: 1px solid #2A2A32;
+            background: #1A1A1F; color: #A2A2AD; white-space: nowrap; }
+    .chip-mint { background: #04291F; border-color: #0C6B4D; color: #00D492; }
+    .chip-verified { background: #04291F; border-color: #0C6B4D; color: #34D399; }
+    .chip-probable { background: #1A1A1F; border-color: #2A2A32; color: #FBBF24; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600; font-size: 14px;
+           border-radius: 10px; padding: 11px 20px; transition: background .16s ease, border-color .16s ease, opacity .16s ease; cursor: pointer; }
+    .btn-primary { background: #00D492; color: #08110D; border: 1px solid #00D492; }
+    .btn-primary:hover { background: #22E8A9; border-color: #22E8A9; }
+    .btn-primary:disabled { opacity: .55; cursor: not-allowed; }
+    .btn-ghost { background: #131316; color: #A2A2AD; border: 1px solid #2A2A32; }
+    .btn-ghost:hover { color: #FAFAFA; border-color: #3A3A45; }
+    .field { background: #131316; border: 1px solid #2A2A32; border-radius: 11px; padding: 12px 15px; color: #FAFAFA;
+             font-size: 15px; width: 100%; outline: none; transition: border-color .16s ease; }
+    .field::placeholder { color: #6E6E7A; }
+    .field:focus { border-color: #0C6B4D; }
+    .blurred { filter: blur(3.5px); user-select: none; pointer-events: none; }
+    .glow { background: radial-gradient(ellipse 60% 45% at 50% 0%, rgba(0, 212, 146, .10), transparent 70%); }
+    @keyframes pulse-dot { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+    .pulse { animation: pulse-dot 1.4s ease-in-out infinite; }
+    @keyframes fade-up { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
+    .fade-up { animation: fade-up .32s ease both; }
+    .scroll-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+    .scroll-thin::-webkit-scrollbar-thumb { background: #2A2A32; border-radius: 999px; }
+    .scroll-thin::-webkit-scrollbar-track { background: transparent; }
+</style>

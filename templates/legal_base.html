@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ru" class="scroll-smooth">
+<head>
+    <title>{{TITLE}} — {{BRAND}}</title>
+    <meta name="description" content="{{TITLE}} сервиса {{BRAND}}.">
+    <!-- include: head.html -->
+</head>
+<body>
+
+<!-- include: nav.html -->
+
+<main class="max-w-[820px] mx-auto px-6 pt-14 pb-20">
+    <a href="/" class="mono text-[11px] text-ink-mute hover:text-ink transition">← На главную</a>
+
+    <h1 class="text-[32px] sm:text-[38px] font-semibold tracking-[-0.015em] mt-5 mb-2.5">{{TITLE}}</h1>
+    <p class="mono text-[11px] text-ink-mute mb-10">Редакция от {{UPDATED}}</p>
+
+    <div class="legal space-y-8 border-t border-edge-subtle pt-9">
+        {{CONTENT}}
+    </div>
+
+    <div class="mt-12 pt-8 border-t border-edge-subtle">
+        <p class="text-[13px] text-ink-mute">
+            Вопросы по документу — <a href="/contacts" class="text-mint hover:text-mint-hover transition">свяжитесь с нами</a>.
+        </p>
+    </div>
+</main>
+
+<style>
+    .legal h2 { font-size: 17px; font-weight: 600; color: #FAFAFA; margin-bottom: 10px; }
+    .legal p { font-size: 14px; line-height: 1.75; color: #A2A2AD; }
+    .legal p + p { margin-top: 10px; }
+    .legal ul { margin-top: 10px; display: flex; flex-direction: column; gap: 7px; }
+    .legal li { font-size: 14px; line-height: 1.7; color: #A2A2AD; padding-left: 18px; position: relative; }
+    .legal li::before { content: '·'; position: absolute; left: 6px; color: #00D492; }
+    .legal strong { color: #FAFAFA; font-weight: 600; }
+    .legal a { color: #00D492; }
+    .legal a:hover { color: #22E8A9; }
+    .legal table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    .legal th, .legal td { text-align: left; font-size: 13px; padding: 10px 12px; border: 1px solid #1F1F25; }
+    .legal th { color: #FAFAFA; font-weight: 600; background: #131316; }
+    .legal td { color: #A2A2AD; }
+</style>
+
+<!-- include: footer.html -->
+</body>
+</html>
