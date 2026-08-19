@@ -157,6 +157,13 @@ class ProfileDorkResolver:
             ),
             "exclude_fragments": ("search", "auth", "posts", "media"),
         },
+        "hh": {
+            "site": "hh.ru/resume",
+            "profile_re": re.compile(
+                r"^https?://(?:[\w-]+\.)?hh\.ru/(?:resume|applicant)/[a-f0-9]+"
+            ),
+            "exclude_fragments": ("vacancy", "search", "employer"),
+        },
     }
 
     ROLE_KEYWORDS = {
@@ -221,6 +228,7 @@ class ProfileDorkResolver:
             "tenchat": "tenchat.ru",
             "linkedin": "linkedin.com/in",
             "setka": "setka.ru",
+            "hh": "hh.ru/resume",
         }
         needle = domain_map.get(platform, "")
         return [r for r in results if needle in r.get("url", "")]
@@ -263,6 +271,9 @@ class ProfileDorkResolver:
             if "1с" in clean_company.lower() or "1c" in clean_company.lower() or "1с" in role_short.lower():
                 queries.append(f"site:tenchat.ru 1с {broad}")
                 queries.append(f"site:tenchat.ru 1с {role_tokens[0] if role_tokens else 'директор'}")
+        if platform == "hh" and name and name not in ("—", "Контакт не найден"):
+            queries.append(f"site:hh.ru/resume {name} {clean_company}")
+            queries.append(f"site:hh.ru/resume {name} {role_tokens[0] if role_tokens else 'директор'}")
 
         seen = set()
         unique = []
@@ -484,9 +495,9 @@ class ProfileDorkResolver:
             if stakeholder_type in ("ceo", "lpr"):
                 platforms = ["tenchat", "linkedin"]
             elif stakeholder_type == "lvr":
-                platforms = ["tenchat", "setka", "linkedin"]
+                platforms = ["tenchat", "hh", "linkedin"]
             else:
-                platforms = ["tenchat", "linkedin"]
+                platforms = ["tenchat", "linkedin", "hh"]
 
         best_match = None
         best_score = 0
@@ -590,6 +601,7 @@ class ProfileDorkResolver:
             "tenchat": f"https://tenchat.ru/search?query={urllib.parse.quote(f'{company} {name} {role}')}",
             "linkedin": f"https://www.linkedin.com/search/results/people/?keywords={urllib.parse.quote(f'{company} {name} {role}')}",
             "setka": f"https://setka.ru/search?query={urllib.parse.quote(f'{company} {name} {role}')}",
+            "hh": f"https://hh.ru/search/resume?text={urllib.parse.quote(f'{name} {company}')}",
         }
 
         if best_match and best_match.get("is_resolved"):
@@ -702,167 +714,21 @@ class ProfessionalNetworkScraper:
         return results
 
     @staticmethod
-    def search_and_enrich_power_map_for_company(company_name: str, inn: str, ceo_name: str, product_domain: str = "1C") -> List[Dict]:
+    def search_and_enrich_power_map_for_company(
+        company_name: str,
+        inn: str,
+        ceo_name: str,
+        product_domain: str = "1C",
+        website_url: Optional[str] = None,
+    ) -> List[Dict]:
         """
-        Строит полную «Карту Власти» (Power Map) со встроенной SMTP-валидацией каждого контакта.
+        Clay-grade «Карта Власти»: Identity Layer → Profile Resolve → SMTP validation.
         """
-        clean_name = company_name.replace('ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ', '').replace('ООО', '').replace('ПАО', '').replace('АО', '').strip(' "')
-        if not clean_name:
-            clean_name = "Компания"
-
-        ProfileDorkResolver.prefetch_company_pool(clean_name, product_domain)
-
-        domain = ContactEnrichmentEngine.transliterate(clean_name) + ".ru"
-        ceo_val = ceo_name if ceo_name and ceo_name != "Руководитель" else "Генеральный директор"
-
-        power_map = []
-
-        def _attach_profile(stakeholder: Dict, stakeholder_type: str, fallback_url: str) -> Dict:
-            profile_data = ProfileDorkResolver.enrich_stakeholder_contacts(
-                company=clean_name,
-                name=stakeholder["name"],
-                role=stakeholder["role"],
-                stakeholder_type=stakeholder_type,
-                fallback_search_url=fallback_url,
-            )
-            stakeholder["profile_url"] = profile_data["profile_url"]
-            stakeholder["profile_resolved"] = profile_data["profile_resolved"]
-            stakeholder["profile_platform"] = profile_data["profile_platform"]
-            stakeholder["profile_confidence"] = profile_data["profile_confidence"]
-            stakeholder["profile_search_engine"] = profile_data["profile_search_engine"]
-            stakeholder["dork_query"] = profile_data["dork_query"]
-            stakeholder["contacts"]["search_link_tenchat"] = profile_data["search_link_tenchat"]
-            if profile_data.get("search_link_linkedin"):
-                stakeholder["contacts"]["search_link_linkedin"] = profile_data["search_link_linkedin"]
-            stakeholder["contacts"]["profile_badge"] = profile_data["profile_badge"]
-            stakeholder["contacts"]["profile_resolved"] = profile_data["profile_resolved"]
-            return stakeholder
-
-        # 1. СТЕЙКХОЛДЕР: Собственник / CEO
-        ceo_email_data = ContactEnrichmentEngine.generate_corporate_email_waterfall(ceo_val, domain)
-        ceo_entry = {
-            "power_type": "Собственник / CEO",
-            "role": "Генеральный директор (ЕГРЮЛ)",
-            "name": ceo_val,
-            "source": "ЕГРЮЛ / Госреестры + Dorking",
-            "source_type": "dadata",
-            "contacts": {
-                "phone": "+7 (495) Приемная гендиректора",
-                "phone_type": "HQ / Приемная (ЕГРЮЛ)",
-                "email": ceo_email_data["primary_email"],
-                "email_status": ceo_email_data["status"],
-                "email_badge": ceo_email_data["badge_label"],
-                "is_verified": ceo_email_data["is_verified"],
-                "telegram": f"@{ContactEnrichmentEngine.transliterate(ceo_val.split()[0])}_{domain.split('.')[0]}",
-                "search_link_tenchat": f"https://tenchat.ru/search?query={urllib.parse.quote(f'{clean_name} {ceo_val}')}",
-                "search_link_telegram": f"https://t.me/{ContactEnrichmentEngine.transliterate(ceo_val.split()[0])}"
-            },
-            "pitch_focus": "Стратегический ROI, оптимизация расходов и рост бизнеса."
-        }
-        # CEO из ЕГРЮЛ — приоритет госреестр, dorking как дополнение
-        ceo_profile = ProfileDorkResolver.resolve_profile(clean_name, ceo_val, ceo_entry["role"], stakeholder_type="ceo")
-        if ceo_profile.get("is_resolved"):
-            ceo_entry["profile_url"] = ceo_profile["profile_url"]
-            ceo_entry["profile_resolved"] = True
-            ceo_entry["profile_platform"] = ceo_profile.get("platform", "tenchat")
-            ceo_entry["contacts"]["search_link_tenchat"] = ceo_profile["profile_url"]
-            ceo_entry["contacts"]["profile_badge"] = f"Direct • {ceo_profile.get('platform', 'TenChat')}"
-            ceo_entry["contacts"]["profile_resolved"] = True
-        else:
-            ceo_entry["profile_url"] = f"https://bo.nalog.ru/search?query={inn}"
-            ceo_entry["profile_resolved"] = False
-            ceo_entry["contacts"]["profile_badge"] = "ЕГРЮЛ"
-            ceo_entry["contacts"]["profile_resolved"] = False
-        power_map.append(ceo_entry)
-
-        # 2. СТЕЙКХОЛДЕР: ЛПР (Бизнес-заказчик)
-        if "1с" in product_domain.lower() or "erp" in product_domain.lower():
-            lpr_role = "Финансовый директор / CFO (ЛПР)"
-            lpr_name = "Ирина Мельникова"
-            lpr_focus = "Устранение ошибок в P&L и балансе, ускорение закрытия месяца в 1С:ERP."
-        else:
-            lpr_role = "Коммерческий директор / CCO (ЛПР)"
-            lpr_name = "Алексей Смирнов"
-            lpr_focus = "Выполнение плана продаж, рост конверсии воронки на 25-30%."
-
-        lpr_email_data = ContactEnrichmentEngine.generate_corporate_email_waterfall(lpr_name, domain)
-        lpr_fallback = f"https://tenchat.ru/search?query={urllib.parse.quote(f'{clean_name} {lpr_role}')}"
-        lpr_entry = {
-            "power_type": "ЛПР (Бизнес-заказчик)",
-            "role": lpr_role,
-            "name": lpr_name,
-            "source": "TenChat / LinkedIn (Dorking)",
-            "source_type": "tenchat",
-            "contacts": {
-                "phone": "+7 (495) Отдел коммерции/финансов",
-                "phone_type": "Корпоративный номер",
-                "email": lpr_email_data["primary_email"],
-                "email_status": lpr_email_data["status"],
-                "email_badge": lpr_email_data["badge_label"],
-                "is_verified": lpr_email_data["is_verified"],
-                "telegram": f"@{ContactEnrichmentEngine.transliterate(lpr_name.split()[0])}_{domain.split('.')[0]}",
-                "search_link_tenchat": lpr_fallback,
-                "search_link_telegram": f"https://t.me/{ContactEnrichmentEngine.transliterate(lpr_name.split()[0])}"
-            },
-            "pitch_focus": lpr_focus
-        }
-        power_map.append(_attach_profile(lpr_entry, "lpr", lpr_fallback))
-
-        # 3. СТЕЙКХОЛДЕР: ЛВР (Технический эксперт)
-        if "1с" in product_domain.lower() or "erp" in product_domain.lower():
-            lvr_role = "Ведущий архитектор 1С / Руководитель разработки (ЛВР)"
-            lvr_name = "Дмитрий Ковалев"
-            lvr_focus = "Снятие технического долга, оптимизация тяжелых запросов и зависаний базы."
-        else:
-            lvr_role = "Руководитель отдела автоматизации / IT Lead (ЛВР)"
-            lvr_name = "Андрей Белевцев"
-            lvr_focus = "Безопасность данных, API-интеграция, поддержка On-Premise."
-
-        lvr_email_data = ContactEnrichmentEngine.generate_corporate_email_waterfall(lvr_name, domain)
-        lvr_fallback = f"https://tenchat.ru/search?query={urllib.parse.quote(f'{clean_name} {lvr_role}')}"
-        lvr_entry = {
-            "power_type": "ЛВР (Технический эксперт)",
-            "role": lvr_role,
-            "name": lvr_name,
-            "source": "Сетка / TenChat (Dorking)",
-            "source_type": "setka",
-            "contacts": {
-                "phone": "+7 (495) IT департамент",
-                "phone_type": "Корпоративный номер",
-                "email": lvr_email_data["primary_email"],
-                "email_status": lvr_email_data["status"],
-                "email_badge": lvr_email_data["badge_label"],
-                "is_verified": lvr_email_data["is_verified"],
-                "telegram": f"@kovalev_1c_lead" if "1с" in product_domain.lower() else f"@belevtsev_tech",
-                "search_link_tenchat": lvr_fallback,
-                "search_link_telegram": "@kovalev_1c_lead"
-            },
-            "pitch_focus": lvr_focus
-        }
-        power_map.append(_attach_profile(lvr_entry, "lvr", lvr_fallback))
-
-        # 4. СТЕЙКХОЛДЕР: ЛДПР / Инициатор
-        hr_email_data = ContactEnrichmentEngine.generate_corporate_email_waterfall("Елена Васильева", domain)
-        hr_fallback = f"https://hh.ru/search/vacancy?text={urllib.parse.quote(clean_name)}"
-        hr_entry = {
-            "power_type": "ЛДПР / Инициатор",
-            "role": "Руководитель подбора / HR Business Partner",
-            "name": "Елена Васильева",
-            "source": "Вакансия + Dorking",
-            "source_type": "vacancy_hr",
-            "contacts": {
-                "phone": "+7 (800) HR-департамент",
-                "phone_type": "Прямой телефон отдела кадров",
-                "email": f"hr@{domain}",
-                "email_status": hr_email_data["status"],
-                "email_badge": hr_email_data["badge_label"],
-                "is_verified": hr_email_data["is_verified"],
-                "telegram": f"@vasilieva_recruiter",
-                "search_link_tenchat": hr_fallback,
-                "search_link_telegram": "@vasilieva_recruiter"
-            },
-            "pitch_focus": "Закрытие горящих задач под ключ без долгого найма специалистов в штат."
-        }
-        power_map.append(_attach_profile(hr_entry, "hr", hr_fallback))
-
-        return power_map
+        from identity_layer import PowerMapBuilder
+        return PowerMapBuilder.build(
+            company_name=company_name,
+            inn=inn,
+            ceo_name=ceo_name,
+            product_domain=product_domain,
+            website_url=website_url,
+        )

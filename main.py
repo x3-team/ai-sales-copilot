@@ -267,18 +267,18 @@ def generate_dynamic_lprs(inn: str, company_name: str, ceo_from_dadata: str, tri
         role = person["role"]
         name = person["name"]
         power_type = person["power_type"]
-        fallback = f"Здравствуйте, {name}! Мы изучили задачи компании «{clean_name}». Предлагаем решение «{p_name}» ({p_val}). Подскажите, когда вам удобно провести 10-минутное демо?"
+        greet_name = name if name not in ("—", "Контакт не найден", "Руководитель") else "коллега"
+        fallback = f"Здравствуйте, {greet_name}! Мы изучили задачи компании «{clean_name}». Предлагаем решение «{p_name}» ({p_val}). Подскажите, когда вам удобно провести 10-минутное демо?"
         
-        # Генерируем живой питч через Gemini только для главного ЛПР (CFO/CCO) в пакетном режиме, для остальных даем релевантный темплейт
         if idx == 1:
-            prompt = f"Напиши персональный B2B-питч (3 емких предложения) для первого контакта в Telegram с {name} ({role}, тип влияния: {power_type}) компании «{clean_name}». Мы предлагаем «{p_name}». Ценность: {p_val}. Специфика триггера: {trigger_info}."
+            prompt = f"Напиши персональный B2B-питч (3 емких предложения) для первого контакта в Telegram с {greet_name} ({role}, тип влияния: {power_type}) компании «{clean_name}». Мы предлагаем «{p_name}». Ценность: {p_val}. Специфика триггера: {trigger_info}."
             person["custom_pitch"] = call_gemini_llm(prompt, fallback)
-        elif idx == 0: # CEO
-            person["custom_pitch"] = f"Здравствуйте, {name}! Обратил внимание на масштабирование компании «{clean_name}». Наша команда предлагает решение «{p_name}» ({p_val}), позволяющее исключить издержки учета и ускорить запуск новых процессов. Готовы показать результаты на 10-минутной встрече?"
-        elif idx == 2: # ЛВР (Архитектор 1С)
-            person["custom_pitch"] = f"Приветствую, {name}! Вижу текущие задачи по развитию и доработке 1С в «{clean_name}». Мы специализируемся на снятии техдолга, оптимизации тяжелых запросов и поддержке 1С:ERP под ключ, чтобы разгрузить вашу команду. Созвонимся на 10 минут?"
-        else: # HR / ЛДПР
-            person["custom_pitch"] = f"Здравствуйте, {name}! Увидел открытую потребность в специалистах 1С для «{clean_name}». Мы помогаем компаниям закрывать проектные задачи по 1С под ключ без необходимости долгих поисков и онбординга людей в штат. Готовы обсудить детали?"
+        elif idx == 0:
+            person["custom_pitch"] = f"Здравствуйте, {greet_name}! Обратил внимание на масштабирование компании «{clean_name}». Наша команда предлагает решение «{p_name}» ({p_val}), позволяющее исключить издержки учета и ускорить запуск новых процессов. Готовы показать результаты на 10-минутной встрече?"
+        elif idx == 2:
+            person["custom_pitch"] = f"Приветствую! Вижу текущие задачи по развитию и доработке 1С в «{clean_name}». Мы специализируемся на снятии техдолга, оптимизации тяжелых запросов и поддержке 1С:ERP под ключ, чтобы разгрузить вашу команду. Созвонимся на 10 минут?"
+        else:
+            person["custom_pitch"] = f"Здравствуйте! Увидел открытую потребность в специалистах 1С для «{clean_name}». Мы помогаем компаниям закрывать проектные задачи по 1С под ключ без необходимости долгих поисков и онбординга людей в штат. Готовы обсудить детали?"
 
     return power_map
 
@@ -360,7 +360,7 @@ def auto_prospect_clients(product_keyword: str = Query("1С", description="Кл�
         "search_query": product_keyword,
         "active_seller_product": current_seller_profile.product_name,
         "found_count": len(prospects),
-        "live_signals_source": "Habr Career + Google Dorking (TenChat/LinkedIn)",
+        "live_signals_source": "Identity Layer: DaData + HH + Habr + TenChat Verify",
         "prospects": prospects
     }
 
@@ -377,7 +377,7 @@ def export_prospects_csv(product_keyword: str = Query("1С")):
     output.write('\ufeff')
     writer = csv.writer(output, delimiter=';')
     
-    writer.writerow(["Компания", "ИНН", "Штат (чел)", "Выручка", "Триггеры потребности", "Стейкхолдер (Имя)", "Тип Влияния", "Должность", "Телефон / Отдел", "Корпоративный Email", "SMTP Статус", "Профиль (URL)", "Профиль найден", "Telegram", "Персональный AI-Питч"])
+    writer.writerow(["Компания", "ИНН", "Штат (чел)", "Выручка", "Триггеры потребности", "Стейкхолдер (Имя)", "Тип Влияния", "Должность", "Источник Identity", "Телефон / Отдел", "Корпоративный Email", "SMTP Статус", "Профиль (URL)", "Confidence", "Профиль найден", "Telegram", "Персональный AI-Питч"])
 
     for p in prospects:
         comp = p["company_info"]
@@ -386,19 +386,22 @@ def export_prospects_csv(product_keyword: str = Query("1С")):
             c = l["contacts"]
             profile_url = l.get("profile_url") or c.get("search_link_tenchat", "")
             profile_found = "Да" if l.get("profile_resolved") or c.get("profile_resolved") else "Нет"
+            display_name = l["name"] if l["name"] not in ("—", "Контакт не найден") else l["role"]
             writer.writerow([
                 comp["company_name"],
                 comp["inn"],
                 comp["employee_count"],
                 comp["revenue"],
                 triggers_str,
-                l["name"],
+                display_name,
                 l.get("power_type", "ЛПР"),
                 l["role"],
+                l.get("identity_source", l.get("source", "")),
                 c.get("phone", ""),
                 c.get("email", ""),
                 c.get("email_status", "250 OK • Verified"),
                 profile_url,
+                l.get("profile_confidence", 0),
                 profile_found,
                 c.get("telegram", ""),
                 l["custom_pitch"]
@@ -416,6 +419,19 @@ def export_prospects_csv(product_keyword: str = Query("1С")):
 # --------------------------------------------------------------------------
 # 5. SINGLE COMPANY ENRICHMENT API
 # --------------------------------------------------------------------------
+
+@app.get("/api/copilot/discover-identity")
+def discover_identity(
+    company: str = Query(..., description="Название компании"),
+    inn: str = Query("", description="ИНН"),
+    ceo_name: str = Query("", description="CEO из DaData"),
+    product_domain: str = Query("1С", description="Продукт продавца"),
+):
+    """Clay-grade Identity Layer: поиск реальных кандидатов ЛПР из открытых источников."""
+    from identity_layer import IdentityLayer
+    candidates = IdentityLayer.discover_candidates(company, inn, ceo_name, product_domain)
+    return {"company": company, "candidates_count": len(candidates), "candidates": candidates}
+
 
 @app.get("/api/copilot/resolve-profile")
 def resolve_lpr_profile(
@@ -962,12 +978,25 @@ def get_demo_ui():
 
         function getProfileBadge(person) {
             const c = person.contacts || {};
-            const resolved = person.profile_resolved || c.profile_resolved;
-            const platform = person.profile_platform || c.profile_badge || '';
-            if (resolved) {
-                return `<span class="badge bg-emerald-50 text-emerald-700 border border-emerald-200 text-[9px] ms-1"><i class="bi bi-link-45deg me-1"></i>Direct</span>`;
+            const badge = c.profile_badge || '';
+            const conf = person.profile_confidence || 0;
+            if (badge === 'Verified' || conf >= 70) {
+                return `<span class="badge bg-emerald-50 text-emerald-700 border border-emerald-200 text-[9px] ms-1"><i class="bi bi-patch-check-fill me-1"></i>Verified</span>`;
+            }
+            if (badge === 'Probable' || (person.profile_resolved || c.profile_resolved) && conf >= 40) {
+                return `<span class="badge bg-amber-50 text-amber-700 border border-amber-200 text-[9px] ms-1"><i class="bi bi-link-45deg me-1"></i>Probable</span>`;
+            }
+            if (badge === 'ЕГРЮЛ') {
+                return `<span class="badge bg-slate-50 text-slate-600 border border-slate-200 text-[9px] ms-1">ЕГРЮЛ</span>`;
             }
             return `<span class="badge bg-slate-50 text-slate-600 border border-slate-200 text-[9px] ms-1">Smart Search</span>`;
+        }
+
+        function getIdentitySourceBadge(person) {
+            const src = person.identity_source || person.source || '';
+            if (!src) return '';
+            const short = src.length > 28 ? src.slice(0, 26) + '…' : src;
+            return `<span class="badge bg-indigo-50 text-indigo-600 border border-indigo-100 text-[8px] ms-1" title="${src}">${short}</span>`;
         }
 
         async function runAutoProspecting() {
@@ -1002,8 +1031,8 @@ def get_demo_ui():
                                 <div class="d-flex justify-content-between align-items-center">
                                     <div>
                                         <span class="badge bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] me-1 font-bold">[${pType}]</span>
-                                        <strong class="text-dark">${l.name}</strong> <span class="text-muted small">(${l.role})</span>
-                                        ${getProfileBadge(l)}
+                                        <strong class="text-dark">${l.name === '—' || l.name === 'Контакт не найден' ? l.role.split('(')[0] : l.name}</strong> <span class="text-muted small">(${l.role})</span>
+                                        ${getProfileBadge(l)} ${getIdentitySourceBadge(l)}
                                     </div>
                                     <div class="small">
                                         <a href="${profileHref}" target="_blank" class="text-decoration-none me-2 text-primary font-semibold"><i class="bi bi-box-arrow-up-right me-1"></i>Профиль</a>
@@ -1111,9 +1140,9 @@ def get_demo_ui():
                         <div class="lpr-card ${idx === 0 ? 'active' : ''}" onclick="selectLpr(${idx})">
                             <div class="d-flex justify-content-between align-items-center mb-1">
                                 <span class="badge bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-bold">${powerBadge}</span>
-                                ${getProfileBadge(person)}
+                                ${getProfileBadge(person)} ${getIdentitySourceBadge(person)}
                             </div>
-                            <h6 class="fw-bold text-dark mb-0 text-truncate">${person.name}</h6>
+                            <h6 class="fw-bold text-dark mb-0 text-truncate">${person.name === '—' || person.name === 'Контакт не найден' ? person.role.split('(')[0].trim() : person.name}</h6>
                             <div class="text-primary small fw-semibold mb-2 lh-sm" style="min-height: 2.2rem;">${person.role}</div>
                             
                             <div class="space-y-1 text-xs border-top pt-2">
