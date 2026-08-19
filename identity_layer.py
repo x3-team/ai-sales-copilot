@@ -387,6 +387,9 @@ class HHVacancyParser:
             return found
         vacancy_url = f"https://hh.ru/vacancy/{vacancy_id}"
 
+        contact_email = meta.get("contact_email") or ""
+        contact_phone = meta.get("contact_phone") or ""
+
         contact_names = re.findall(
             r"контакт(?:ное\s+лицо)?[:\s\-–]+([А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+)",
             description,
@@ -400,6 +403,8 @@ class HHVacancyParser:
                 "source_type": "hh_vacancy",
                 "confidence_base": 60,
                 "vacancy_url": vacancy_url,
+                "contact_email": contact_email,
+                "contact_phone": contact_phone,
                 "stakeholder_hint": "hr",
             })
 
@@ -412,6 +417,8 @@ class HHVacancyParser:
                 "source_type": "hh_vacancy_lpr",
                 "confidence_base": 48,
                 "vacancy_url": vacancy_url,
+                "contact_email": contact_email,
+                "contact_phone": contact_phone,
                 "employer": employer,
                 "stakeholder_hint": "lpr",
             })
@@ -423,6 +430,8 @@ class HHVacancyParser:
                 "source_type": "hh_vacancy_it",
                 "confidence_base": 45,
                 "vacancy_url": vacancy_url,
+                "contact_email": contact_email,
+                "contact_phone": contact_phone,
                 "employer": employer,
                 "stakeholder_hint": "lvr",
             })
@@ -434,6 +443,8 @@ class HHVacancyParser:
                 "source_type": "hh_vacancy_hr",
                 "confidence_base": 40,
                 "vacancy_url": vacancy_url,
+                "contact_email": contact_email,
+                "contact_phone": contact_phone,
                 "stakeholder_hint": "hr",
             })
         return found
@@ -459,6 +470,43 @@ class HHVacancyParser:
             if key not in seen:
                 seen.add(key)
                 out.append(item)
+        return out
+
+    @classmethod
+    def scan_keyword_vacancies(cls, keyword: str, limit: int = 5) -> List[Dict]:
+        """Поиск живых вакансий HH по ключевому слову (без SerpAPI)."""
+        ids = cls._collect_vacancy_ids("", keyword, "")[: limit * 4]
+        out: List[Dict] = []
+        seen_employers: set = set()
+        kw = keyword.lower()
+        for vid in ids:
+            meta = cls._fetch_vacancy_meta(vid)
+            if not meta:
+                continue
+            title = (meta.get("title") or "").strip()
+            blob = f"{title} {(meta.get('description') or '')}".lower()
+            if not any(k in blob for k in ("1с", "1c")):
+                continue
+            if "архив" in blob[:80]:
+                continue
+            employer = (meta.get("employer") or "").strip()
+            if not employer or employer.lower() in seen_employers:
+                continue
+            seen_employers.add(employer.lower())
+            out.append({
+                "employer": employer,
+                "title": title,
+                "salary": meta.get("salary") or "",
+                "experience": meta.get("experience") or "",
+                "url": f"https://hh.ru/vacancy/{vid}",
+                "vacancy_id": vid,
+                "contact_email": meta.get("contact_email") or "",
+                "contact_phone": meta.get("contact_phone") or "",
+                "demand_reason": f"Открытая вакансия HH: «{title}»",
+                "power_map_roles": ["CEO", "ЛПР", "ЛВР 1С", "ЛДПР HR"],
+            })
+            if len(out) >= limit:
+                break
         return out
 
 
@@ -1197,9 +1245,6 @@ class PowerMapBuilder:
             if name != "—" and name != "Контакт не найден":
                 used_names.add(name.lower())
 
-            email_name = name if name not in ("—", "Контакт не найден") else clean_name.split()[0]
-            email_data = ContactEnrichmentEngine.generate_corporate_email_waterfall(email_name, email_domain)
-
             profiles = IdentityLayer.resolve_profiles_for_person(
                 name=name if name not in ("—",) else "",
                 role=role,
@@ -1214,6 +1259,8 @@ class PowerMapBuilder:
                     clean_name, "", role, stakeholder_type=slot
                 )
                 url = role_dork.get("profile_url") or ""
+                if url and "/search" in url:
+                    url = ""
                 if url and (role_dork.get("is_resolved") or role_dork.get("score", 0) >= 35):
                     conf = role_dork.get("confidence", 40)
                     company_ok = True
@@ -1324,21 +1371,7 @@ class PowerMapBuilder:
                 "profile_search_engine": profiles.get("profile_search_engine", ""),
                 "dork_query": profiles.get("dork_query", ""),
                 "pitch_focus": cls._pitch_for_slot(slot, product_domain, cfg["pitch_focus"]),
-                "contacts": {
-                    "phone": cls._phone_for_slot(slot),
-                    "phone_type": "Корпоративный / открытый источник",
-                    "email": email_data["primary_email"],
-                    "email_status": email_data["status"],
-                    "email_badge": email_data["badge_label"],
-                    "is_verified": email_data["is_verified"],
-                    "telegram": f"@{ContactEnrichmentEngine.transliterate((name.split()[0] if name not in ('—', 'Контакт не найден') else 'contact'))}_{email_domain.split('.')[0]}",
-                    "search_link_tenchat": profiles.get("search_link_tenchat", ""),
-                    "search_link_setka": profiles.get("search_link_setka", ""),
-                    "search_link_linkedin": profiles.get("search_link_linkedin", ""),
-                    "search_link_hh": profiles.get("search_link_hh", ""),
-                    "profile_badge": profiles.get("profile_badge", "Smart Search"),
-                    "profile_resolved": profiles.get("profile_resolved", False),
-                },
+                "contacts": cls._contacts_from_sources(name, profiles, picked),
             }
             power_map.append(entry)
 
@@ -1359,6 +1392,44 @@ class PowerMapBuilder:
         if "1с" in product_domain.lower() and slot == "lvr":
             return "Снятие технического долга 1С, оптимизация тяжёлых запросов и стабильность базы."
         return default
+
+    @classmethod
+    def _contacts_from_sources(cls, name: str, profiles: Dict, picked: Optional[Dict]) -> Dict:
+        """Только подтверждённые контакты из открытых источников — без генерации."""
+        contacts = {
+            "phone": "—",
+            "phone_type": "",
+            "email": "—",
+            "email_status": "unknown",
+            "email_badge": "—",
+            "is_verified": False,
+            "telegram": "—",
+            "search_link_tenchat": profiles.get("search_link_tenchat", ""),
+            "search_link_setka": profiles.get("search_link_setka", ""),
+            "search_link_linkedin": profiles.get("search_link_linkedin", ""),
+            "search_link_hh": profiles.get("search_link_hh", ""),
+            "profile_badge": profiles.get("profile_badge", "Не подтверждён"),
+            "profile_resolved": profiles.get("profile_resolved", False),
+        }
+        if not picked:
+            return contacts
+        if picked.get("contact_email"):
+            contacts["email"] = picked["contact_email"]
+            contacts["email_status"] = "HH.ru вакансия"
+            contacts["email_badge"] = "Открытый источник"
+            contacts["is_verified"] = True
+        if picked.get("contact_phone"):
+            contacts["phone"] = picked["contact_phone"]
+            contacts["phone_type"] = "HH.ru вакансия"
+        if picked.get("email"):
+            contacts["email"] = picked["email"]
+            contacts["email_status"] = picked.get("email_status") or "Открытый источник"
+            contacts["is_verified"] = True
+        if picked.get("phone"):
+            contacts["phone"] = picked["phone"]
+        if picked.get("telegram"):
+            contacts["telegram"] = picked["telegram"]
+        return contacts
 
     @classmethod
     def _phone_for_slot(cls, slot: str) -> str:
