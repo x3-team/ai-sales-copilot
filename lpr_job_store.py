@@ -9,7 +9,19 @@ import time
 from typing import Any, Dict, List, Optional
 
 _DEFAULT_DIR = os.path.join(os.path.dirname(__file__), "data")
-DB_PATH = os.environ.get("LPR_JOBS_DB_PATH") or os.path.join(_DEFAULT_DIR, "lpr_jobs.db")
+_RENDER_DISK_DIR = "/var/data"
+
+
+def _resolve_db_path() -> str:
+    explicit = os.environ.get("LPR_JOBS_DB_PATH", "").strip()
+    if explicit:
+        return explicit
+    if os.path.isdir(_RENDER_DISK_DIR) and os.access(_RENDER_DISK_DIR, os.W_OK):
+        return os.path.join(_RENDER_DISK_DIR, "lpr_jobs.db")
+    return os.path.join(_DEFAULT_DIR, "lpr_jobs.db")
+
+
+DB_PATH = _resolve_db_path()
 
 _LOCK = threading.Lock()
 
