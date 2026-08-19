@@ -501,6 +501,70 @@ def upsert_from_inbound(
     return count
 
 
+def upsert_from_hh_vacancy(
+    company_inn: str,
+    company_name: str,
+    vacancy: Dict[str, Any],
+) -> Optional[int]:
+    """Persist open HH vacancy contact fields; empty slots stay empty."""
+    if not company_inn:
+        return None
+    url = (vacancy.get("url") or "").strip()
+    if not url:
+        vid = str(vacancy.get("id") or vacancy.get("vacancy_id") or "").replace("hh-", "")
+        if vid:
+            url = f"https://hh.ru/vacancy/{vid}"
+
+    contact_name = (
+        vacancy.get("contact_name")
+        or vacancy.get("hr_name")
+        or ""
+    ).strip()
+    contact_email = (
+        vacancy.get("contact_email")
+        or vacancy.get("hr_email")
+        or ""
+    ).strip()
+    contact_phone = (
+        vacancy.get("contact_phone")
+        or vacancy.get("hr_phone")
+        or ""
+    ).strip()
+    title = (vacancy.get("title") or "Вакансия").strip()
+    trigger = f"HH: {url}" if url else f"HH: {title}"
+
+    upsert_company(
+        company_inn,
+        name=company_name or "",
+        sources=["hh.ru"],
+        triggers=[trigger],
+    )
+
+    person_id: Optional[int] = None
+    if contact_name or contact_email or contact_phone:
+        person_id = upsert_person(
+            company_inn=company_inn,
+            stakeholder="ldpr",
+            fio=contact_name,
+            role=f"HR / Контактное лицо (вакансия «{title[:60]}»)",
+            profile_url=None,
+            platform="hh",
+            sources=["hh.ru"],
+            meta={
+                "source_type": "hh_vacancy",
+                "vacancy_url": url,
+                "contacts_hidden": bool(vacancy.get("contacts_hidden")),
+            },
+        )
+        if contact_email:
+            upsert_contact(person_id, "email", contact_email, source_url=url or None)
+        if contact_phone:
+            upsert_contact(person_id, "phone", contact_phone, source_url=url or None)
+
+    refresh_company_status(company_inn, ceo_name=None)
+    return person_id
+
+
 def refresh_company_status(inn: str, *, ceo_name: Optional[str] = None) -> Dict[str, Any]:
     row = get_company(inn) or {}
     people = list_people(inn)
@@ -551,7 +615,9 @@ def list_companies(
     queue: Optional[str] = None,
     status: Optional[str] = None,
     limit: int = 100,
+    include_inactive: bool = False,
 ) -> List[Dict[str, Any]]:
+    from live_companies import INACTIVE_COMPANY_INNS, is_active_company
     with _connection() as conn:
         if db_backend() == "postgres":
             import psycopg2.extras
@@ -597,10 +663,14 @@ def list_companies(
     out = []
     for row in rows:
         item = dict(row)
+        inn = item.get("inn") or ""
+        if not include_inactive and not is_active_company(inn):
+            continue
         st = item.get("card_status") or company_status.STATUS_SIGNAL
         item["triggers"] = _json_load(item.get("triggers"), [])
         item["status_label"] = company_status.status_label(st)
         item["queue"] = company_status.queue_for_status(st)
+        item["active"] = inn not in INACTIVE_COMPANY_INNS
         out.append(item)
     return out
 

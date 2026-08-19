@@ -253,8 +253,45 @@ class HHVacancyParser:
         "директор по продажам", "руководитель продаж", "head of sales",
         "директор по развитию", "заместитель генерального",
     )
-    IT_TITLE_KEYWORDS = ("1с", "1c", "архитектор", "разработчик", "it ", "программист", "devops", "системный администратор")
+    IT_TITLE_KEYWORDS = (
+        "1с", "1c", "зуп", "ут", "erp",
+        "архитектор", "разработчик", "it ", "программист", "devops",
+        "системный администратор", "консультант", "аналитик", "внедрен",
+        "администратор", "автоматизация",
+    )
     HR_TITLE_KEYWORDS = ("hr", "рекрутер", "подбор", "кадр", "talent", "hrbp")
+    ONE_C_SEARCH_KEYWORDS = (
+        "программист 1с",
+        "программист 1c",
+        "консультант 1с",
+        "консультант 1c",
+        "аналитик 1с",
+        "аналитик 1c",
+        "внедренец 1с",
+        "внедренец 1c",
+        "администратор 1с",
+        "администратор 1c",
+        "1с зуп",
+        "1с ут",
+        "1с erp",
+        "erp 1с",
+        "erp 1c",
+        "автоматизация 1с",
+        "автоматизация 1c",
+        "1с:зуп",
+        "1с:ут",
+        "1с:erp",
+    )
+    ONE_C_FOCUS_KEYWORDS = (
+        "1с", "1c", "зуп", "ут", "erp",
+        "консультант", "аналитик", "внедрен", "программист", "администратор",
+        "автоматизация",
+    )
+    HIDDEN_CONTACT_MARKERS = (
+        "контактная информация скрыта",
+        "контакты скрыты",
+        "контактные данные скрыты",
+    )
 
     @classmethod
     def discover(cls, company_name: str, product_keyword: str = "", inn: str = "") -> List[Dict]:
@@ -283,34 +320,127 @@ class HHVacancyParser:
                 "requirement": (parsed.get("description") or "")[:200],
                 "employer": parsed.get("employer") or company_name,
                 "url": f"https://hh.ru/vacancy/{vid}",
-                "hr_name": parsed.get("contact_name") or "Отдел подбора",
+                "hr_name": parsed.get("contact_name") or "",
                 "hr_email": parsed.get("contact_email") or "",
                 "hr_phone": parsed.get("contact_phone") or "",
+                "contact_name": parsed.get("contact_name") or "",
+                "contact_email": parsed.get("contact_email") or "",
+                "contact_phone": parsed.get("contact_phone") or "",
+                "contacts_hidden": bool(parsed.get("contacts_hidden")),
             })
         return out
 
     @classmethod
+    def one_c_search_keywords(cls, product_keyword: str = "") -> List[str]:
+        """Expanded HH queries focused on 1С ecosystem roles."""
+        seen: List[str] = []
+        for kw in cls.ONE_C_SEARCH_KEYWORDS:
+            if kw not in seen:
+                seen.append(kw)
+        pk = (product_keyword or "").strip().lower()
+        if pk and pk not in seen and any(x in pk for x in ("1с", "1c")):
+            seen.insert(0, pk)
+        return seen
+
+    @classmethod
+    def matches_one_c_focus(cls, text: str) -> bool:
+        blob = (text or "").lower()
+        return any(k in blob for k in cls.ONE_C_FOCUS_KEYWORDS)
+
+    @classmethod
+    def parse_open_contacts(cls, html: str) -> Dict[str, str]:
+        """Parse only open HH vacancy contact fields — no guessing from description."""
+        soup = BeautifulSoup(html, "html.parser")
+        return cls.parse_open_contacts_from_soup(soup)
+
+    @classmethod
+    def parse_open_contacts_from_soup(cls, soup: BeautifulSoup) -> Dict[str, str]:
+        result: Dict[str, str] = {
+            "contact_name": "",
+            "contact_email": "",
+            "contact_phone": "",
+            "contacts_hidden": "false",
+        }
+        page_text = soup.get_text(" ", strip=True).lower()
+        if any(marker in page_text for marker in cls.HIDDEN_CONTACT_MARKERS):
+            result["contacts_hidden"] = "true"
+            return result
+
+        contacts_root = (
+            soup.select_one('[data-qa="vacancy-contacts"]')
+            or soup.select_one(".vacancy-contacts")
+        )
+        if not contacts_root:
+            return result
+
+        block_text = contacts_root.get_text(" ", strip=True).lower()
+        if "скрыт" in block_text and not contacts_root.select_one('[data-qa="vacancy-contacts-name"]'):
+            result["contacts_hidden"] = "true"
+            return result
+
+        name_el = contacts_root.select_one('[data-qa="vacancy-contacts-name"]')
+        if name_el:
+            result["contact_name"] = name_el.get_text(strip=True)
+
+        phone_el = contacts_root.select_one('[data-qa="vacancy-contacts-phone"]')
+        if phone_el:
+            result["contact_phone"] = phone_el.get_text(strip=True)
+
+        email_el = contacts_root.select_one('[data-qa="vacancy-contacts-email"]')
+        if email_el:
+            href = email_el.get("href") or ""
+            if href.startswith("mailto:"):
+                result["contact_email"] = href.replace("mailto:", "").split("?")[0].strip()
+            else:
+                result["contact_email"] = email_el.get_text(strip=True)
+        else:
+            mailto = contacts_root.select_one('a[href^="mailto:"]')
+            if mailto and mailto.get("href"):
+                result["contact_email"] = (
+                    mailto["href"].replace("mailto:", "").split("?")[0].strip()
+                )
+
+        return result
+
+    @classmethod
     def _collect_vacancy_ids(cls, company_name: str, product_keyword: str = "", inn: str = "") -> List[str]:
         ids: List[str] = []
-        for url in cls._search_urls(company_name, product_keyword, inn):
-            try:
-                resp = requests.get(url, headers=cls.HEADERS, timeout=10)
-                if resp.status_code != 200:
-                    continue
-                ids.extend(re.findall(r"/vacancy/(\d{6,})", resp.text))
-            except Exception:
-                continue
-        if not ids and product_keyword:
-            try:
-                resp = requests.get(
-                    f"https://hh.ru/search/vacancy?text={urllib.parse.quote(product_keyword)}",
-                    headers=cls.HEADERS,
-                    timeout=10,
-                )
-                if resp.status_code == 200:
+        clean = IdentityLayer._clean_company_name(company_name) if company_name else ""
+
+        if company_name or inn:
+            for q in cls._search_urls(company_name, product_keyword, inn):
+                try:
+                    resp = requests.get(q, headers=cls.HEADERS, timeout=10)
+                    if resp.status_code != 200:
+                        continue
                     ids.extend(re.findall(r"/vacancy/(\d{6,})", resp.text))
-            except Exception:
-                pass
+                except Exception:
+                    continue
+            if clean and cls.matches_one_c_focus(product_keyword or ""):
+                for term in cls.one_c_search_keywords(product_keyword)[:4]:
+                    combined = f"{clean} {term}".strip()
+                    try:
+                        resp = requests.get(
+                            f"https://hh.ru/search/vacancy?text={urllib.parse.quote(combined)}",
+                            headers=cls.HEADERS,
+                            timeout=10,
+                        )
+                        if resp.status_code == 200:
+                            ids.extend(re.findall(r"/vacancy/(\d{6,})", resp.text))
+                    except Exception:
+                        continue
+        else:
+            for term in cls.one_c_search_keywords(product_keyword):
+                try:
+                    resp = requests.get(
+                        f"https://hh.ru/search/vacancy?text={urllib.parse.quote(term)}",
+                        headers=cls.HEADERS,
+                        timeout=10,
+                    )
+                    if resp.status_code == 200:
+                        ids.extend(re.findall(r"/vacancy/(\d{6,})", resp.text))
+                except Exception:
+                    continue
         return list(dict.fromkeys(ids))[:12]
 
     @classmethod
@@ -360,16 +490,11 @@ class HHVacancyParser:
             exp_el = soup.select_one("[data-qa='vacancy-experience']")
             if exp_el:
                 meta["experience"] = exp_el.get_text(strip=True)
-            contacts = re.findall(
-                r"контакт(?:ное\s+лицо)?[:\s\-–]+([А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+)",
-                meta["description"],
-                re.I,
-            )
-            meta["contact_name"] = contacts[0].strip() if contacts else ""
-            email_m = re.search(r"[\w.\-]+@[\w.\-]+\.\w+", meta["description"])
-            meta["contact_email"] = email_m.group(0) if email_m else ""
-            phone_m = re.search(r"\+7[\d\s\-()]{10,}", meta["description"])
-            meta["contact_phone"] = phone_m.group(0).strip() if phone_m else ""
+            open_contacts = cls.parse_open_contacts_from_soup(soup)
+            meta["contact_name"] = open_contacts.get("contact_name") or ""
+            meta["contact_email"] = open_contacts.get("contact_email") or ""
+            meta["contact_phone"] = open_contacts.get("contact_phone") or ""
+            meta["contacts_hidden"] = open_contacts.get("contacts_hidden") == "true"
             return meta
         except Exception:
             return None
@@ -389,15 +514,11 @@ class HHVacancyParser:
 
         contact_email = meta.get("contact_email") or ""
         contact_phone = meta.get("contact_phone") or ""
+        contact_name = meta.get("contact_name") or ""
 
-        contact_names = re.findall(
-            r"контакт(?:ное\s+лицо)?[:\s\-–]+([А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+)",
-            description,
-            re.I,
-        )
-        for name in contact_names:
+        if contact_name:
             found.append({
-                "name": name.strip(),
+                "name": contact_name.strip(),
                 "role": "HR / Контактное лицо (вакансия)",
                 "source": f"HH.ru вакансия «{title[:50]}»",
                 "source_type": "hh_vacancy",
@@ -411,7 +532,7 @@ class HHVacancyParser:
         role_lower = (title + " " + description).lower()
         if any(k in role_lower for k in cls.LPR_TITLE_KEYWORDS):
             found.append({
-                "name": "—",
+                "name": "",
                 "role": title[:80] or "Финансовый / Коммерческий директор (вакансия)",
                 "source": f"HH.ru: {employer} — «{title[:50]}»",
                 "source_type": "hh_vacancy_lpr",
@@ -422,9 +543,9 @@ class HHVacancyParser:
                 "employer": employer,
                 "stakeholder_hint": "lpr",
             })
-        if any(k in role_lower for k in cls.IT_TITLE_KEYWORDS):
+        if any(k in role_lower for k in cls.IT_TITLE_KEYWORDS) and cls.matches_one_c_focus(role_lower):
             found.append({
-                "name": "—",
+                "name": "",
                 "role": title[:80] or "IT-специалист (вакансия)",
                 "source": f"HH.ru: {employer} — «{title[:50]}»",
                 "source_type": "hh_vacancy_it",
@@ -437,7 +558,7 @@ class HHVacancyParser:
             })
         if any(k in role_lower for k in cls.HR_TITLE_KEYWORDS):
             found.append({
-                "name": "—",
+                "name": "",
                 "role": "HR / Рекрутер (вакансия)",
                 "source": f"HH.ru: {employer}",
                 "source_type": "hh_vacancy_hr",
@@ -473,41 +594,94 @@ class HHVacancyParser:
         return out
 
     @classmethod
-    def scan_keyword_vacancies(cls, keyword: str, limit: int = 5) -> List[Dict]:
-        """Поиск живых вакансий HH по ключевому слову (без SerpAPI)."""
-        ids = cls._collect_vacancy_ids("", keyword, "")[: limit * 4]
+    def scan_keyword_vacancies(cls, keyword: str, limit: int = 5, *, require_inn: bool = True) -> List[Dict]:
+        """Поиск живых вакансий HH по ключевым словам 1С (без SerpAPI)."""
+        search_terms = cls.one_c_search_keywords(keyword)
+        ids: List[str] = []
+        for term in search_terms:
+            ids.extend(cls._collect_vacancy_ids("", term, "")[: limit * 3])
+            if len(ids) >= limit * 4:
+                break
+        ids = list(dict.fromkeys(ids))[: limit * 4]
         out: List[Dict] = []
         seen_employers: set = set()
-        kw = keyword.lower()
         for vid in ids:
             meta = cls._fetch_vacancy_meta(vid)
             if not meta:
                 continue
             title = (meta.get("title") or "").strip()
             blob = f"{title} {(meta.get('description') or '')}".lower()
-            if not any(k in blob for k in ("1с", "1c")):
+            if not cls.matches_one_c_focus(blob):
                 continue
             if "архив" in blob[:80]:
                 continue
             employer = (meta.get("employer") or "").strip()
             if not employer or employer.lower() in seen_employers:
                 continue
+            resolved_inn = cls._resolve_employer_inn(employer) if require_inn else ""
+            if require_inn and not resolved_inn:
+                continue
             seen_employers.add(employer.lower())
+            vacancy_url = f"https://hh.ru/vacancy/{vid}"
             out.append({
                 "employer": employer,
+                "inn": resolved_inn,
                 "title": title,
                 "salary": meta.get("salary") or "",
                 "experience": meta.get("experience") or "",
-                "url": f"https://hh.ru/vacancy/{vid}",
+                "url": vacancy_url,
                 "vacancy_id": vid,
+                "contact_name": meta.get("contact_name") or "",
                 "contact_email": meta.get("contact_email") or "",
                 "contact_phone": meta.get("contact_phone") or "",
+                "contacts_hidden": bool(meta.get("contacts_hidden")),
                 "demand_reason": f"Открытая вакансия HH: «{title}»",
                 "power_map_roles": ["CEO", "ЛПР", "ЛВР 1С", "ЛДПР HR"],
             })
             if len(out) >= limit:
                 break
         return out
+
+    @classmethod
+    def _resolve_employer_inn(cls, employer_name: str) -> str:
+        """Resolve employer INN via DaData suggest; empty when no confident match."""
+        import os
+
+        api_key = os.environ.get("DADATA_API_KEY", "").strip()
+        if not api_key or not employer_name:
+            return ""
+        try:
+            url = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/party"
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Authorization": f"Token {api_key}",
+            }
+            resp = requests.post(
+                url,
+                json={"query": employer_name, "count": 3},
+                headers=headers,
+                timeout=8,
+            )
+            if resp.status_code != 200:
+                return ""
+            suggestions = resp.json().get("suggestions") or []
+            if not suggestions:
+                return ""
+            top = suggestions[0]
+            data = top.get("data") or {}
+            inn = (data.get("inn") or "").strip()
+            value = (top.get("value") or "").lower()
+            clean_employer = employer_name.lower().strip()
+            if not inn:
+                return ""
+            if clean_employer[:8] in value or value[:8] in clean_employer:
+                return inn
+            if IdentityLayer._company_similar(employer_name, top.get("value") or ""):
+                return inn
+        except Exception:
+            return ""
+        return ""
 
 
 class TenChatCompanyParser:
@@ -820,6 +994,11 @@ class IdentityLayer:
 
         candidates.extend(WebsiteTeamParser.discover(website_url, clean))
         candidates.extend(HHVacancyParser.discover(clean, product_domain, inn))
+
+        from live_companies import skip_social_discovery
+        if skip_social_discovery(inn):
+            return cls._dedupe_and_classify(candidates)
+
         candidates.extend(TenChatCompanyParser.discover(clean, inn))
         candidates.extend(SetkaCompanyParser.discover(clean, inn, product_domain))
 
@@ -1208,10 +1387,13 @@ class PowerMapBuilder:
 
         clean_name = IdentityLayer._clean_company_name(company_name) or "Компания"
         prefilled_by_slot = prefilled_by_slot or {}
+        from live_companies import skip_social_discovery
+        social_skip = skip_social_discovery(inn)
         need_discovery = only_slots is None or any(s not in prefilled_by_slot for s in (only_slots or ()))
         candidates: List[Dict] = []
         if need_discovery:
-            ProfileDorkResolver.prefetch_company_pool(clean_name, product_domain)
+            if not social_skip:
+                ProfileDorkResolver.prefetch_company_pool(clean_name, product_domain)
             ContactEnrichmentEngine.resolve_email_domain(website_url, clean_name)
             candidates = IdentityLayer.discover_candidates(
                 clean_name, inn, ceo_name, product_domain, website_url
@@ -1272,7 +1454,7 @@ class PowerMapBuilder:
                 existing_profile=existing,
             )
 
-            if not profiles.get("profile_resolved") and slot != "ceo":
+            if not profiles.get("profile_resolved") and slot != "ceo" and not social_skip:
                 role_dork = ProfileDorkResolver.resolve_profile(
                     clean_name, "", role, stakeholder_type=slot
                 )

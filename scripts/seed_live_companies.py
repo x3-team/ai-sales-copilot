@@ -42,6 +42,7 @@ def live_company_records() -> List[Dict[str, Any]]:
         {
             "inn": "771579995573",
             "name": "ИП Елисеев М.А.",
+            "active": False,
             "triggers": [],
             "people": [
                 {
@@ -153,6 +154,12 @@ def apply_live_seed(memory_store: Any) -> Dict[str, Any]:
             sources=sources,
             triggers=rec.get("triggers") or [],
         )
+        if rec.get("active") is False:
+            memory_store.upsert_company(
+                inn,
+                name=rec["name"],
+                sources=sources + ["inactive_legal_entity"],
+            )
 
         for person in rec.get("people") or []:
             meta = {

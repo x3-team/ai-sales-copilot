@@ -43,6 +43,7 @@ GENERIC_EMAIL_LOCAL_PREFIXES = (
     "sales",
     "pr",
     "hr",
+    "vacancy",
     "buh",
     "accounting",
     "secretary",
@@ -116,6 +117,12 @@ def is_company_directory_source(source_url: Optional[str]) -> bool:
     return any(h in u for h in COMPANY_DIRECTORY_SOURCE_HINTS)
 
 
+def is_hh_vacancy_source(source_url: Optional[str]) -> bool:
+    if not source_url:
+        return False
+    return "hh.ru/vacancy/" in source_url.lower()
+
+
 def is_personal_reachable_contact(
     contact_type: str,
     value: Any,
@@ -126,6 +133,8 @@ def is_personal_reachable_contact(
         return False
     if contact_type == "email" and is_generic_office_email(str(value)):
         return False
+    if is_hh_vacancy_source(source_url):
+        return contact_type in ("phone", "telegram", "email")
     if contact_type in ("phone", "telegram", "email") and is_company_directory_source(source_url):
         return False
     if contact_type == "phone" and source_url and "checko.ru" in source_url.lower():

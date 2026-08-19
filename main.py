@@ -269,13 +269,27 @@ def generate_dynamic_lprs(
     website_url: str = None,
     stored_lprs: Optional[List[dict]] = None,
 ):
+    from live_companies import skip_social_discovery
+
     clean_name = company_name.replace('ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ', '').replace('ООО', '').replace('ПАО', '').replace('АО', '').strip(' "')
     if not clean_name:
         clean_name = "Компания"
 
     prefilled = memory_store.lprs_by_slot(stored_lprs or [])
     missing = memory_store.slots_needing_search(stored_lprs or [])
-    if stored_lprs and not missing:
+    if skip_social_discovery(inn):
+        if stored_lprs:
+            power_map = list(stored_lprs)
+        else:
+            only_slots = ("ceo",)
+            power_map = ProfessionalNetworkScraper.search_and_enrich_power_map_for_company(
+                clean_name, inn, ceo_from_dadata,
+                product_domain=current_seller_profile.product_name,
+                website_url=website_url,
+                only_slots=only_slots,
+                prefilled_by_slot=None,
+            )
+    elif stored_lprs and not missing:
         power_map = list(stored_lprs)
     else:
         only_slots = tuple(missing) if missing else None
@@ -904,6 +918,15 @@ def enrich_company_profile(
     
     product_kw = current_seller_profile.product_name or "1С"
     vacancies = generate_dynamic_hh_vacancies(company_info["inn"], company_info["name"], product_kw)
+    for vac in vacancies:
+        try:
+            memory_store.upsert_from_hh_vacancy(
+                company_info["inn"],
+                company_info["name"],
+                vac,
+            )
+        except Exception:
+            pass
     lpr_list = generate_dynamic_lprs(
         company_info["inn"],
         company_info["name"],
