@@ -283,16 +283,39 @@ def upsert_person(
     platform: Optional[str] = None,
     sources: Optional[List[str]] = None,
     meta: Optional[Dict[str, Any]] = None,
+    reset_profile_url: bool = False,
 ) -> int:
     slot = _normalize_stakeholder(stakeholder)
     now = _now_ts()
     src = sources or []
     meta_obj = meta or {}
+    profile_sql_pg = (
+        "profile_url = EXCLUDED.profile_url"
+        if reset_profile_url
+        else "profile_url = COALESCE(NULLIF(EXCLUDED.profile_url, ''), people.profile_url)"
+    )
+    meta_sql_pg = (
+        "meta = EXCLUDED.meta"
+        if reset_profile_url
+        else "meta = people.meta || EXCLUDED.meta"
+    )
+    profile_sql_sq = (
+        "profile_url = excluded.profile_url"
+        if reset_profile_url
+        else "profile_url = COALESCE(NULLIF(excluded.profile_url, ''), people.profile_url)"
+    )
+    meta_sql_sq = (
+        "meta = excluded.meta"
+        if reset_profile_url
+        else "meta = excluded.meta"
+    )
+    if not reset_profile_url:
+        meta_sql_sq = "meta = people.meta || excluded.meta"
     with _connection() as conn:
         if db_backend() == "postgres":
             cur = conn.cursor()
             cur.execute(
-                """
+                f"""
                 INSERT INTO people (
                     fio, role, company_inn, stakeholder, profile_url, platform, sources, meta,
                     created_at, updated_at
@@ -301,7 +324,7 @@ def upsert_person(
                 ON CONFLICT (company_inn, stakeholder) DO UPDATE SET
                     fio = COALESCE(NULLIF(EXCLUDED.fio, ''), people.fio),
                     role = COALESCE(NULLIF(EXCLUDED.role, ''), people.role),
-                    profile_url = COALESCE(NULLIF(EXCLUDED.profile_url, ''), people.profile_url),
+                    {profile_sql_pg},
                     platform = COALESCE(NULLIF(EXCLUDED.platform, ''), people.platform),
                     sources = (
                         SELECT COALESCE(jsonb_agg(DISTINCT elem), '[]'::jsonb)
@@ -311,7 +334,7 @@ def upsert_person(
                             SELECT jsonb_array_elements_text(EXCLUDED.sources)
                         ) s
                     ),
-                    meta = people.meta || EXCLUDED.meta,
+                    {meta_sql_pg},
                     updated_at = NOW()
                 RETURNING id
                 """,
@@ -330,7 +353,7 @@ def upsert_person(
             person_id = int(row[0])
         else:
             conn.execute(
-                """
+                f"""
                 INSERT INTO people (
                     fio, role, company_inn, stakeholder, profile_url, platform, sources, meta,
                     created_at, updated_at
@@ -339,10 +362,10 @@ def upsert_person(
                 ON CONFLICT (company_inn, stakeholder) DO UPDATE SET
                     fio = COALESCE(NULLIF(excluded.fio, ''), people.fio),
                     role = COALESCE(NULLIF(excluded.role, ''), people.role),
-                    profile_url = COALESCE(NULLIF(excluded.profile_url, ''), people.profile_url),
+                    {profile_sql_sq},
                     platform = COALESCE(NULLIF(excluded.platform, ''), people.platform),
                     sources = excluded.sources,
-                    meta = excluded.meta,
+                    {meta_sql_sq},
                     updated_at = excluded.updated_at
                 """,
                 (

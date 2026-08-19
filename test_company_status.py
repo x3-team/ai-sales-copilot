@@ -102,6 +102,22 @@ class CompanyStatusTest(unittest.TestCase):
         )
         self.assertEqual(status, cs.STATUS_NAMED)
 
+    def test_checko_phone_not_reachable(self):
+        people = [{
+            "fio": "Мальцев Максим Робертович",
+            "profile_url": None,
+            "meta": {},
+            "contacts": [
+                {"type": "phone", "value": "+7 800 301-10-32",
+                 "source_url": "https://checko.ru/company/super-sila-1174205018239"},
+            ],
+        }]
+        status = cs.compute_card_status(people=people, ceo_name="Мальцев")
+        self.assertEqual(status, cs.STATUS_NAMED)
+
+    def test_rusprofile_not_personal_profile(self):
+        self.assertFalse(cs.is_personal_profile_url("https://www.rusprofile.ru/id/11095765"))
+
     def test_live_rus_kanc_signal_not_reachable(self):
         status = cs.compute_card_status(
             lprs=[_lpr(email="kanc@ooorus.net")],

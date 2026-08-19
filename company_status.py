@@ -98,12 +98,57 @@ def is_generic_office_email(email: Optional[str]) -> bool:
     return False
 
 
+COMPANY_DIRECTORY_SOURCE_HINTS = (
+    "checko.ru/company",
+    "checko.ru/",
+    "companian.ru/",
+    "sbis.ru/contragents",
+    "rusprofile.ru/",
+    "kzorka.ddbq.ru",
+    "ddbq.ru",
+)
+
+
+def is_company_directory_source(source_url: Optional[str]) -> bool:
+    if not source_url:
+        return False
+    u = source_url.lower()
+    return any(h in u for h in COMPANY_DIRECTORY_SOURCE_HINTS)
+
+
+def is_personal_reachable_contact(
+    contact_type: str,
+    value: Any,
+    source_url: Optional[str] = None,
+) -> bool:
+    """Only direct LPR contacts count — not Checko/SBIS/Rusprofile company phones or office mail."""
+    if not is_real_contact(value):
+        return False
+    if contact_type == "email" and is_generic_office_email(str(value)):
+        return False
+    if contact_type in ("phone", "telegram", "email") and is_company_directory_source(source_url):
+        return False
+    if contact_type == "phone" and source_url and "checko.ru" in source_url.lower():
+        return False
+    return contact_type in ("phone", "telegram", "email")
+
+
 def is_personal_profile_url(url: Optional[str]) -> bool:
-    """Direct person profile — not company page, search, or registry."""
+    """Direct person profile on social — not EGRUL/Checko/SBIS registry pages."""
     if not url or not str(url).startswith("http"):
         return False
     u = url.lower().split("?", 1)[0]
-    if any(x in u for x in ("/search", "bo.nalog.ru", "hh.ru/vacancy", "hh.ru/search")):
+    if any(x in u for x in (
+        "rusprofile.ru",
+        "checko.ru",
+        "sbis.ru",
+        "companian.ru",
+        "bo.nalog.ru",
+        "/search",
+        "hh.ru/vacancy",
+        "hh.ru/search",
+        "hh.ru/employer",
+    )):
         return False
     if "linkedin.com/in/" in u:
         return True
@@ -170,17 +215,17 @@ def compute_card_status(
     if people:
         for person in people:
             contacts_raw = person.get("contacts") or []
-            contact_map = {c.get("type"): c.get("value") for c in contacts_raw if c.get("value")}
             entries.append(
                 {
                     "name": person.get("fio") or person.get("name"),
                     "profile_url": person.get("profile_url"),
                     "profile_resolved": (person.get("meta") or {}).get("profile_resolved"),
                     "contacts": {
-                        "email": contact_map.get("email"),
-                        "phone": contact_map.get("phone"),
-                        "telegram": contact_map.get("telegram"),
+                        "email": next((c["value"] for c in contacts_raw if c.get("type") == "email"), None),
+                        "phone": next((c["value"] for c in contacts_raw if c.get("type") == "phone"), None),
+                        "telegram": next((c["value"] for c in contacts_raw if c.get("type") == "telegram"), None),
                     },
+                    "_all_contacts": contacts_raw,
                 }
             )
 
@@ -188,15 +233,23 @@ def compute_card_status(
         if is_real_name(entry.get("name")):
             has_named = True
         contacts = entry.get("contacts") or {}
+        all_contacts = entry.get("_all_contacts") or []
         email = contacts.get("email")
         phone = contacts.get("phone")
         telegram = contacts.get("telegram")
         profile_url = entry.get("profile_url") or ""
 
-        if is_real_contact(phone) or is_real_contact(telegram):
-            has_reachable = True
-        if is_real_contact(email) and not is_generic_office_email(str(email)):
-            has_reachable = True
+        for c in all_contacts:
+            ctype = c.get("type") or ""
+            if is_personal_reachable_contact(ctype, c.get("value"), c.get("source_url")):
+                has_reachable = True
+        if not all_contacts:
+            if is_personal_reachable_contact("phone", phone, None):
+                has_reachable = True
+            if is_personal_reachable_contact("telegram", telegram, None):
+                has_reachable = True
+            if is_personal_reachable_contact("email", email, None):
+                has_reachable = True
         if entry.get("profile_resolved") and is_personal_profile_url(profile_url):
             has_reachable = True
         elif is_personal_profile_url(profile_url) and is_real_name(entry.get("name")):
