@@ -6,7 +6,7 @@ import io
 import time
 import requests
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, HTTPException, Query, Body, Response
+from fastapi import FastAPI, HTTPException, Query, Body, Response, Header
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -20,6 +20,7 @@ except ImportError:
     pass
 
 import demo_mode
+import lpr_webhook
 
 app = FastAPI(title="Sales Copilot")
 
@@ -505,6 +506,16 @@ def copilot_sources_status():
                     "Обновляйте ~раз в 2 недели. MVP работает и без этого."
                 ),
             },
+            "lpr_webhook": {
+                "configured": lpr_webhook.is_configured(),
+                "submit_url_set": bool(os.environ.get("LPR_AGENT_SUBMIT_URL")),
+                "label": "LPR Agent (webhook)",
+                "message": (
+                    "POST /api/copilot/lpr-jobs → webhook_url + prompt для провайдера"
+                    if lpr_webhook.is_configured()
+                    else "Задайте WEBHOOK_BASE_URL=https://your-app.onrender.com"
+                ),
+            },
         },
     }
 
@@ -566,6 +577,103 @@ class CRMDealRequest(BaseModel):
     pitch: str
     lead_score: int
     selected_lpr: Optional[str] = None
+
+
+class LprJobCreateRequest(BaseModel):
+    prompt: Optional[str] = None
+    inn: str = ""
+    company_name: str = ""
+    platforms: Optional[List[str]] = None
+    metadata: Optional[dict] = None
+    auto_submit: bool = True
+
+
+@app.post("/api/copilot/lpr-jobs")
+def create_lpr_job(body: LprJobCreateRequest):
+    """
+    Создаёт задачу для внешнего LPR-агента.
+    Отдаёт webhook_url + prompt — их передаёте провайдеру.
+    Провайдер вызывает callback с result_url или contacts inline.
+    """
+    if not lpr_webhook.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="WEBHOOK_BASE_URL не задан — укажите публичный URL сервиса в env",
+        )
+    prompt = body.prompt or lpr_webhook.default_prompt(
+        body.company_name or "Компания",
+        body.inn or "—",
+        current_seller_profile.product_name or "1С",
+    )
+    try:
+        return lpr_webhook.create_job(
+            prompt=prompt,
+            inn=body.inn,
+            company_name=body.company_name,
+            platforms=body.platforms,
+            metadata=body.metadata,
+            auto_submit=body.auto_submit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/copilot/lpr-jobs/{job_id}")
+def get_lpr_job(job_id: str):
+    try:
+        return lpr_webhook.get_job_public(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/webhooks/lpr/inbound")
+def lpr_inbound_webhook(
+    job_id: str = Query(..., description="ID задачи из create_lpr_job"),
+    payload: dict = Body(default_factory=dict),
+    x_webhook_secret: Optional[str] = Header(None, alias="X-Webhook-Secret"),
+):
+    """Callback от внешнего LPR-сервиса: result_url или contacts."""
+    if not lpr_webhook.verify_inbound_secret(x_webhook_secret):
+        raise HTTPException(status_code=401, detail="Invalid webhook secret")
+    try:
+        return lpr_webhook.handle_inbound_webhook(job_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/copilot/lpr-jobs/{job_id}/apply-to-enrich")
+def apply_lpr_job_to_enrich(job_id: str, inn: str = Query(..., description="ИНН компании в кэше enrich")):
+    """Подмешивает готовых кандидатов из webhook-job в кэш enrich по ИНН."""
+    try:
+        job = lpr_webhook.get_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if job.get("status") != "completed":
+        raise HTTPException(status_code=409, detail=f"Job status: {job.get('status')}")
+
+    cached = demo_mode.cache_get(inn)
+    if not cached:
+        raise HTTPException(status_code=404, detail="Enrich cache miss — сначала запустите enrich по этому ИНН")
+
+    extra = lpr_webhook.candidates_to_lpr_entries(job.get("candidates") or [])
+    if not extra:
+        raise HTTPException(status_code=422, detail="Job completed but candidates empty")
+
+    merged = dict(cached)
+    lprs = list((merged.get("lpr_matrix") or {}).get("lprs") or [])
+    seen_urls = {p.get("profile_url") for p in lprs if p.get("profile_url")}
+    for entry in extra:
+        url = entry.get("profile_url")
+        if url and url in seen_urls:
+            continue
+        lprs.append(entry)
+        if url:
+            seen_urls.add(url)
+
+    merged["lpr_matrix"] = {"total_lprs": len(lprs), "lprs": lprs}
+    merged["lpr_webhook_applied"] = {"job_id": job_id, "added": len(extra)}
+    demo_mode.cache_set(inn, merged)
+    return merged
 
 @app.get("/api/copilot/demo-companies")
 def copilot_demo_companies():
@@ -706,6 +814,25 @@ def enrich_company_profile(
             ]
         }
     }
+
+    if lpr_webhook.is_configured() and os.environ.get("LPR_WEBHOOK_AUTO", "0") == "1":
+        try:
+            job = lpr_webhook.create_job(
+                prompt=lpr_webhook.default_prompt(company_info["name"], company_info["inn"], product_kw),
+                inn=company_info["inn"],
+                company_name=company_info["name"],
+                metadata={"source": "enrich-company"},
+                auto_submit=True,
+            )
+            result["lpr_job"] = {
+                "job_id": job["job_id"],
+                "status": job["status"],
+                "webhook_url": job["webhook_url"],
+                "poll_url": f"/api/copilot/lpr-jobs/{job['job_id']}",
+            }
+        except ValueError:
+            pass
+
     demo_mode.cache_set(resolved_inn, result)
     return result
 
