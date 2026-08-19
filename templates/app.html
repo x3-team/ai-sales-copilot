@@ -195,7 +195,7 @@ function closePaywall() {
 function unlockDemoPaywall() {
     paywallUnlocked = true;
     closePaywall();
-    toast('Доступ открыт — демо-режим');
+    toast('Доступ открыт');
     const lprs = ((enriched || {}).lpr_matrix || {}).lprs || [];
     if (lprs.length) {
         document.querySelectorAll('[data-contact-row]').forEach(el => el.classList.remove('blurred'));
@@ -369,7 +369,7 @@ async function runAgent(e) {
         currentStep = 6; renderStepper();
         setAgentStatus('готово · 6 из 6', false);
         setWorkspaceBar('готово · 6 из 6', false, companyLabel);
-        if (enriched.cache_hit) toast('Результат из кэша — мгновенный повтор для демо');
+        if (enriched.cache_hit) toast('Результат из кэша');
         else if (enriched.sources_status_note) toast(enriched.sources_status_note);
 
     } catch (err) {
@@ -377,7 +377,7 @@ async function runAgent(e) {
         setAgentStatus('ошибка', false);
         setWorkspaceBar('ошибка', false, null);
         const msg = err.name === 'AbortError'
-            ? 'Превышено время ожидания (3 мин). Попробуйте demo-ИНН 0278181110.'
+            ? 'Превышено время ожидания (3 мин). Попробуйте другой ИНН или название компании.'
             : (err.message || String(err));
         logLine(msg, 'run');
         document.getElementById('results').innerHTML =
@@ -433,7 +433,7 @@ function renderSignals(data) {
 function badgeFor(p) {
     const conf = p.profile_confidence || 0;
     const badge = (p.contacts || {}).profile_badge || '';
-    if (badge === 'Verified' || conf >= 70) return `<span class="chip chip-verified"><span class="w-1 h-1 rounded-full bg-verified"></span>Verified</span>`;
+    if (badge === 'Verified' || (conf >= 70 && p.profile_resolved)) return `<span class="chip chip-verified"><span class="w-1 h-1 rounded-full bg-verified"></span>Verified</span>`;
     if (badge === 'ЕГРЮЛ') return `<span class="chip">ЕГРЮЛ</span>`;
     if (p.profile_resolved || conf >= 40) return `<span class="chip chip-probable">Probable</span>`;
     return `<span class="chip">Не подтверждён</span>`;

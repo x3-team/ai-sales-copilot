@@ -271,8 +271,6 @@ def generate_dynamic_lprs(inn: str, company_name: str, ceo_from_dadata: str, tri
     )
 
     email_domain = ContactEnrichmentEngine.resolve_email_domain(website_url, clean_name)
-    if demo_mode.is_demo_mode():
-        power_map = demo_mode.apply_demo_polish(power_map, inn, company_name, email_domain)
 
     p_name = current_seller_profile.product_name
     p_val = current_seller_profile.value_proposition
@@ -509,6 +507,7 @@ def copilot_sources_status():
             "lpr_webhook": {
                 "configured": lpr_webhook.is_configured(),
                 "hmac_configured": lpr_webhook.hmac_configured(),
+                "store": lpr_webhook.store_info(),
                 "submit_url_set": bool(os.environ.get("LPR_AGENT_SUBMIT_URL")),
                 "label": "LPR Agent (webhook)",
                 "message": (
@@ -833,7 +832,7 @@ def enrich_company_profile(
         "seller_product_profile": current_seller_profile,
         "dadata_legal_profile": company_info,
         "sources_status_note": sources_note,
-        "demo_mode": demo_mode.is_demo_mode(),
+        "demo_mode": False,
         "cache_hit": False,
         "query_resolved": {"input": raw, "inn": resolved_inn},
         "lpr_matrix": {

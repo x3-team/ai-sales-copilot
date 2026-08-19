@@ -1,8 +1,5 @@
 """
-Demo-mode helpers: query resolution, enrich cache, profile simulation for sales demos.
-
-When DEMO_MODE=1 (default) and a stakeholder slot has no verified TenChat profile,
-curated or generated personas are applied so the power map looks complete in client demos.
+Query resolution and enrich cache. Demo profile simulation is disabled (DEMO_MODE=0).
 """
 import hashlib
 import os
@@ -11,7 +8,7 @@ import time
 import urllib.parse
 from typing import Any, Dict, List, Optional
 
-DEMO_MODE = os.environ.get("DEMO_MODE", "1").lower() not in ("0", "false", "no")
+DEMO_MODE = os.environ.get("DEMO_MODE", "0").lower() not in ("0", "false", "no")
 ENRICH_CACHE_TTL = int(os.environ.get("ENRICH_CACHE_TTL", "3600"))
 
 _enrich_cache: Dict[str, Dict[str, Any]] = {}
@@ -181,62 +178,9 @@ def apply_demo_polish(
     company_name: str,
     email_domain: str,
 ) -> List[Dict[str, Any]]:
-    """Fill missing stakeholder profiles with curated/demo TenChat links for client demos."""
-    if not DEMO_MODE:
-        return power_map
-
-    from scraper import ContactEnrichmentEngine
-
-    short = company_name
-    for token in ("ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ", "ООО", "ПАО", "АО", "«", "»", '"'):
-        short = short.replace(token, " ")
-    short = " ".join(short.split())[:40] or "Компания"
-
-    curated = CURATED_PERSONAS.get(inn.strip(), {})
-
-    for i, entry in enumerate(power_map):
-        slot = SLOT_KEYS[i] if i < len(SLOT_KEYS) else "lpr"
-        if not _needs_demo_fill(entry, slot):
-            continue
-
-        persona = curated.get(slot) or _generic_persona(inn, slot, short)
-        conf = persona.get("profile_confidence", 68)
-        badge = "Verified" if conf >= 70 else "Probable"
-        url = persona["profile_url"]
-
-        entry["name"] = persona["name"]
-        if persona.get("role"):
-            entry["role"] = persona["role"]
-        entry["profile_url"] = url
-        entry["profile_resolved"] = True
-        entry["profile_platform"] = "TenChat"
-        entry["profile_confidence"] = conf
-        entry["source"] = "TenChat (public verify)"
-        entry["source_type"] = "tenchat_verified"
-        entry["identity_source"] = entry["source"]
-
-        contacts = entry.setdefault("contacts", {})
-        email_name = persona["name"]
-        email_data = ContactEnrichmentEngine.generate_corporate_email_waterfall(
-            email_name, email_domain or ContactEnrichmentEngine.transliterate(short) + ".ru"
-        )
-        contacts.update({
-            "email": email_data["primary_email"],
-            "email_status": email_data["status"],
-            "email_badge": email_data["badge_label"],
-            "is_verified": email_data["is_verified"],
-            "profile_badge": badge,
-            "profile_resolved": True,
-            "search_link_tenchat": url,
-            "telegram": f"@{ContactEnrichmentEngine.transliterate(email_name.split()[0])}_{(email_domain or 'corp').split('.')[0]}",
-        })
-
+    """Disabled — returns power map unchanged."""
     return power_map
 
 
 def demo_company_chips() -> List[Dict[str, str]]:
-    return [
-        {"inn": "0278181110", "label": "0278181110 · ПР-Лизинг"},
-        {"inn": "7709257050", "label": "7709257050 · 1С-Софт"},
-        {"inn": "7709440038", "label": "7709440038 · Мегаполис Логистика"},
-    ]
+    return []
