@@ -507,6 +507,7 @@ def copilot_sources_status():
             "lpr_webhook": {
                 "configured": lpr_webhook.is_configured(),
                 "hmac_configured": lpr_webhook.hmac_configured(),
+                "store": lpr_webhook.store_info(),
                 "submit_url_set": bool(os.environ.get("LPR_AGENT_SUBMIT_URL")),
                 "label": "LPR Agent (webhook)",
                 "message": (

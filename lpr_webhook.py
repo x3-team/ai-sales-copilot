@@ -22,6 +22,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+import lpr_job_store
+
 logger = logging.getLogger(__name__)
 
 WEBHOOK_BASE_URL = (os.environ.get("WEBHOOK_BASE_URL") or os.environ.get("PUBLIC_BASE_URL") or "").rstrip("/")
@@ -38,7 +40,12 @@ _UUID_RE = re.compile(
     re.I,
 )
 
-_jobs: Dict[str, Dict[str, Any]] = {}
+_jobs: Dict[str, Dict[str, Any]] = {}  # legacy cache; authoritative store is SQLite
+
+
+def _persist_job(job: Dict[str, Any]) -> None:
+    _jobs[job["job_id"]] = job
+    lpr_job_store.save_job(job)
 
 
 def _now() -> float:
@@ -47,6 +54,7 @@ def _now() -> float:
 
 def _purge_expired() -> None:
     cutoff = _now() - JOB_TTL
+    lpr_job_store.purge_expired(cutoff)
     stale = [jid for jid, job in _jobs.items() if job.get("created_at", 0) < cutoff]
     for jid in stale:
         _jobs.pop(jid, None)
@@ -177,6 +185,7 @@ def create_job(
         "provider_response": None,
     }
     _jobs[job_id] = job
+    _persist_job(job)
 
     submit_info = None
     if auto_submit and LPR_AGENT_SUBMIT_URL:
@@ -266,19 +275,22 @@ def submit_task_to_provider(job: Dict[str, Any] | None = None, job_id: str = "")
         job["updated_at"] = _now()
         if resp.status_code >= 400:
             job["error"] = f"Provider submit HTTP {resp.status_code}"
+        _persist_job(job)
         return job["provider_response"]
     except Exception as exc:
         job["status"] = "failed"
         job["error"] = str(exc)
         job["updated_at"] = _now()
+        _persist_job(job)
         return {"error": str(exc)}
 
 
 def get_job(job_id: str) -> Dict[str, Any]:
     validate_job_id(job_id)
-    job = _jobs.get(job_id)
+    job = _jobs.get(job_id) or lpr_job_store.load_job(job_id)
     if not job:
         raise KeyError(f"Job {job_id} not found")
+    _jobs[job_id] = job
     return job
 
 
@@ -314,6 +326,7 @@ def handle_inbound_webhook(job_id: str, payload: Dict[str, Any]) -> Dict[str, An
             job["error"] = "result_url должен быть HTTPS"
             job["updated_at"] = _now()
             _log_inbound(job_id, "failed")
+            _persist_job(job)
             return get_job_public(job_id)
         job["result_url"] = result_url
         try:
@@ -324,6 +337,7 @@ def handle_inbound_webhook(job_id: str, payload: Dict[str, Any]) -> Dict[str, An
             job["error"] = f"Не удалось скачать result_url: {exc}"
             job["updated_at"] = _now()
             _log_inbound(job_id, "failed")
+            _persist_job(job)
             return get_job_public(job_id)
 
     candidates = normalize_contacts(payload, provider="soprano")
@@ -347,6 +361,7 @@ def handle_inbound_webhook(job_id: str, payload: Dict[str, Any]) -> Dict[str, An
             "lpr_webhook candidates_redacted=%s",
             json.dumps([_redact_contact(c) for c in candidates], ensure_ascii=False),
         )
+    _persist_job(job)
     return get_job_public(job_id)
 
 
@@ -540,3 +555,7 @@ def is_configured() -> bool:
 
 def hmac_configured() -> bool:
     return bool(WEBHOOK_HMAC_SECRET)
+
+
+def store_info() -> Dict[str, Any]:
+    return {"backend": "sqlite", "path": lpr_job_store.db_path()}
