@@ -1,11 +1,14 @@
 """
 TenChat authenticated session для MVP (бесплатно, без официального API).
 
-Нужны cookies после входа на tenchat.ru:
-  TCAF — access token
-  TCRF — refresh token
+TenChat хранит OAuth-токены в cookies TCAF (access) и TCRF (refresh), но API
+ожидает заголовок Authorization: Bearer <access>. Cookies часто HttpOnly —
+в DevTools → Application их может не быть, тогда берите Bearer из Network.
 
-Задаются через env TENCHAT_COOKIE или отдельно TENCHAT_ACCESS_TOKEN / TENCHAT_REFRESH_TOKEN.
+Env (любой из вариантов):
+  TENCHAT_ACCESS_TOKEN + TENCHAT_REFRESH_TOKEN
+  TENCHAT_COOKIE=TCAF=...; TCRF=...
+  TENCHAT_BEARER=...  (только access, для read-only поиска)
 """
 import os
 import re
@@ -31,11 +34,15 @@ class TenChatAuthClient:
 
     @classmethod
     def is_configured(cls) -> bool:
-        return bool(cls._get_access_token() and cls._get_refresh_token())
+        return bool(cls._get_access_token())
 
     @classmethod
     def _get_access_token(cls) -> str:
-        return os.environ.get("TENCHAT_ACCESS_TOKEN", "").strip() or cls._parse_cookie_value("TCAF")
+        bearer = os.environ.get("TENCHAT_BEARER", "").strip()
+        if bearer:
+            return bearer.removeprefix("Bearer ").strip()
+        token = os.environ.get("TENCHAT_ACCESS_TOKEN", "").strip() or cls._parse_cookie_value("TCAF")
+        return token.removeprefix("Bearer ").strip()
 
     @classmethod
     def _get_refresh_token(cls) -> str:
@@ -53,6 +60,14 @@ class TenChatAuthClient:
         return ""
 
     @classmethod
+    def _auth_headers(cls, extra: Optional[Dict] = None) -> Dict:
+        headers = {**cls.HEADERS, **(extra or {})}
+        access = cls._get_access_token()
+        if access:
+            headers["Authorization"] = f"Bearer {access}"
+        return headers
+
+    @classmethod
     def _get_session(cls) -> requests.Session:
         if cls._session is None:
             cls._session = requests.Session()
@@ -61,6 +76,7 @@ class TenChatAuthClient:
         refresh = cls._get_refresh_token()
         if access:
             cls._session.cookies.set("TCAF", access, domain="tenchat.ru")
+            cls._session.headers["Authorization"] = f"Bearer {access}"
         if refresh:
             cls._session.cookies.set("TCRF", refresh, domain="tenchat.ru")
         return cls._session
@@ -72,12 +88,15 @@ class TenChatAuthClient:
             return {
                 "configured": False,
                 "authenticated": False,
-                "message": "Задайте TENCHAT_COOKIE (TCAF + TCRF) или TENCHAT_ACCESS_TOKEN + TENCHAT_REFRESH_TOKEN",
+                "message": (
+                    "Задайте TENCHAT_BEARER или TENCHAT_ACCESS_TOKEN "
+                    "(DevTools → Network → любой запрос к tenchat.ru → Authorization: Bearer ...)"
+                ),
             }
         try:
             resp = cls._get_session().get(
                 f"{cls.BASE_URL}{cls.API_PREFIX}/account/work-status",
-                headers={**cls.HEADERS, "Accept": "application/json"},
+                headers=cls._auth_headers({"Accept": "application/json"}),
                 timeout=8,
             )
             if resp.status_code == 200:
@@ -91,7 +110,10 @@ class TenChatAuthClient:
                 return {
                     "configured": True,
                     "authenticated": False,
-                    "message": "Cookies устарели — войдите в TenChat заново и обновите TENCHAT_COOKIE",
+                    "message": (
+                        "Токен недействителен. DevTools → Network → Fetch/XHR → "
+                        "work-status или username → скопируйте Authorization: Bearer ..."
+                    ),
                 }
             return {
                 "configured": True,
@@ -130,7 +152,10 @@ class TenChatAuthClient:
             (f"{cls.API_PREFIX}/account/search", {"query": query}),
             (f"{cls.API_PREFIX}/account/search/default", {}),
         ]
-        headers = {**cls.HEADERS, "Accept": "application/json", "Content-Type": "application/json"}
+        headers = cls._auth_headers({
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        })
 
         for path, body in endpoints:
             try:
