@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
-from scraper import ProfessionalNetworkScraper
+from scraper import ProfessionalNetworkScraper, ProfileDorkResolver
 
 app = FastAPI(title="AI Sales Copilot Production Pilot")
 
@@ -360,7 +360,7 @@ def auto_prospect_clients(product_keyword: str = Query("1С", description="Кл�
         "search_query": product_keyword,
         "active_seller_product": current_seller_profile.product_name,
         "found_count": len(prospects),
-        "live_signals_source": "Habr Career & TenChat Live Scraper",
+        "live_signals_source": "Habr Career + Google Dorking (TenChat/LinkedIn)",
         "prospects": prospects
     }
 
@@ -377,13 +377,15 @@ def export_prospects_csv(product_keyword: str = Query("1С")):
     output.write('\ufeff')
     writer = csv.writer(output, delimiter=';')
     
-    writer.writerow(["Компания", "ИНН", "Штат (чел)", "Выручка", "Триггеры потребности", "Стейкхолдер (Имя)", "Тип Влияния", "Должность", "Телефон / Отдел", "Корпоративный Email", "SMTP Статус", "Telegram / Профиль", "Персональный AI-Питч"])
+    writer.writerow(["Компания", "ИНН", "Штат (чел)", "Выручка", "Триггеры потребности", "Стейкхолдер (Имя)", "Тип Влияния", "Должность", "Телефон / Отдел", "Корпоративный Email", "SMTP Статус", "Профиль (URL)", "Профиль найден", "Telegram", "Персональный AI-Питч"])
 
     for p in prospects:
         comp = p["company_info"]
         triggers_str = ", ".join(comp.get("hiring_triggers", []))
         for l in p["target_lprs"]:
             c = l["contacts"]
+            profile_url = l.get("profile_url") or c.get("search_link_tenchat", "")
+            profile_found = "Да" if l.get("profile_resolved") or c.get("profile_resolved") else "Нет"
             writer.writerow([
                 comp["company_name"],
                 comp["inn"],
@@ -396,6 +398,8 @@ def export_prospects_csv(product_keyword: str = Query("1С")):
                 c.get("phone", ""),
                 c.get("email", ""),
                 c.get("email_status", "250 OK • Verified"),
+                profile_url,
+                profile_found,
                 c.get("telegram", ""),
                 l["custom_pitch"]
             ])
@@ -412,6 +416,29 @@ def export_prospects_csv(product_keyword: str = Query("1С")):
 # --------------------------------------------------------------------------
 # 5. SINGLE COMPANY ENRICHMENT API
 # --------------------------------------------------------------------------
+
+@app.get("/api/copilot/resolve-profile")
+def resolve_lpr_profile(
+    company: str = Query(..., description="Название компании"),
+    name: str = Query("", description="ФИО или имя ЛПР"),
+    role: str = Query("директор", description="Должность"),
+    stakeholder_type: str = Query("lpr", description="ceo | lpr | lvr | hr"),
+):
+    """
+    Backend Google Dorking: находит прямой URL профиля ЛПР на TenChat/LinkedIn/Сетке.
+    """
+    result = ProfileDorkResolver.resolve_profile(
+        company=company,
+        name=name,
+        role=role,
+        stakeholder_type=stakeholder_type,
+    )
+    return {
+        "company": company,
+        "name": name,
+        "role": role,
+        **result,
+    }
 
 class CRMDealRequest(BaseModel):
     company_name: str
@@ -928,6 +955,21 @@ def get_demo_ui():
             }
         }
 
+        function getProfileLink(person) {
+            const c = person.contacts || {};
+            return person.profile_url || c.search_link_tenchat || c.search_link_linkedin || '#';
+        }
+
+        function getProfileBadge(person) {
+            const c = person.contacts || {};
+            const resolved = person.profile_resolved || c.profile_resolved;
+            const platform = person.profile_platform || c.profile_badge || '';
+            if (resolved) {
+                return `<span class="badge bg-emerald-50 text-emerald-700 border border-emerald-200 text-[9px] ms-1"><i class="bi bi-link-45deg me-1"></i>Direct</span>`;
+            }
+            return `<span class="badge bg-slate-50 text-slate-600 border border-slate-200 text-[9px] ms-1">Smart Search</span>`;
+        }
+
         async function runAutoProspecting() {
             const kw = document.getElementById('autoProductKeyword').value.trim();
             if (!kw) return;
@@ -953,15 +995,19 @@ def get_demo_ui():
                     p.target_lprs.forEach(l => {
                         const pType = l.power_type ? l.power_type : 'ЛПР';
                         const c = l.contacts || {};
+                        const profileHref = getProfileLink(l);
+                        const linkedinHref = (c.search_link_linkedin && c.profile_resolved) ? c.search_link_linkedin : null;
                         lprsHtml += `
                             <div class="p-2 bg-white border rounded mb-2 shadow-sm">
                                 <div class="d-flex justify-content-between align-items-center">
                                     <div>
                                         <span class="badge bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] me-1 font-bold">[${pType}]</span>
                                         <strong class="text-dark">${l.name}</strong> <span class="text-muted small">(${l.role})</span>
+                                        ${getProfileBadge(l)}
                                     </div>
                                     <div class="small">
-                                        <a href="${c.search_link_tenchat || '#'}" target="_blank" class="text-decoration-none me-2 text-primary font-semibold"><i class="bi bi-box-arrow-up-right me-1"></i>Профиль</a>
+                                        <a href="${profileHref}" target="_blank" class="text-decoration-none me-2 text-primary font-semibold"><i class="bi bi-box-arrow-up-right me-1"></i>Профиль</a>
+                                        ${linkedinHref ? `<a href="${linkedinHref}" target="_blank" class="text-decoration-none me-2 text-primary font-semibold"><i class="bi bi-linkedin me-1"></i>LI</a>` : ''}
                                         <a href="https://t.me/${(c.telegram || '').replace('@','')}" target="_blank" class="text-decoration-none text-info font-semibold"><i class="bi bi-telegram me-1"></i>TG</a>
                                     </div>
                                 </div>
@@ -1059,11 +1105,13 @@ def get_demo_ui():
                     col.className = 'col-md-3';
                     const powerBadge = person.power_type ? person.power_type : 'ЛПР';
                     const c = person.contacts || {};
+                    const profileHref = getProfileLink(person);
+                    const linkedinHref = (c.search_link_linkedin && (person.profile_resolved || c.profile_resolved)) ? c.search_link_linkedin : null;
                     col.innerHTML = `
                         <div class="lpr-card ${idx === 0 ? 'active' : ''}" onclick="selectLpr(${idx})">
                             <div class="d-flex justify-content-between align-items-center mb-1">
                                 <span class="badge bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-bold">${powerBadge}</span>
-                                <span class="badge bg-emerald-50 text-emerald-700 border border-emerald-200 text-[9px]"><i class="bi bi-shield-check"></i> Verified</span>
+                                ${getProfileBadge(person)}
                             </div>
                             <h6 class="fw-bold text-dark mb-0 text-truncate">${person.name}</h6>
                             <div class="text-primary small fw-semibold mb-2 lh-sm" style="min-height: 2.2rem;">${person.role}</div>
@@ -1079,9 +1127,10 @@ def get_demo_ui():
                                     <i class="bi bi-telephone text-slate-500 me-1"></i> ${c.phone}
                                 </div>
                                 <div class="d-flex items-center justify-between pt-1">
-                                    <a href="${c.search_link_tenchat || '#'}" target="_blank" class="text-decoration-none text-primary text-[11px] fw-semibold" onclick="event.stopPropagation()">
+                                    <a href="${profileHref}" target="_blank" class="text-decoration-none text-primary text-[11px] fw-semibold" onclick="event.stopPropagation()">
                                         <i class="bi bi-box-arrow-up-right me-1"></i> Профиль
                                     </a>
+                                    ${linkedinHref ? `<a href="${linkedinHref}" target="_blank" class="text-decoration-none text-blue-700 text-[11px] fw-semibold" onclick="event.stopPropagation()"><i class="bi bi-linkedin me-1"></i> LI</a>` : ''}
                                     <a href="https://t.me/${(c.telegram || '').replace('@','')}" target="_blank" class="text-decoration-none text-sky-600 text-[11px] fw-semibold" onclick="event.stopPropagation()">
                                         <i class="bi bi-telegram me-1"></i> Telegram
                                     </a>
