@@ -14,6 +14,8 @@ import time
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
+import company_status
+
 SLOT_ORDER = ("ceo", "lpr", "lvr", "ldpr")
 SLOT_ALIASES = {"hr": "ldpr", "ldpr": "ldpr"}
 PLACEHOLDER_NAMES = frozenset(
@@ -90,29 +92,51 @@ def _migration_sql_path() -> str:
     return os.path.join(base, "001_initial_sqlite.sql")
 
 
+def _ensure_sqlite_status_columns(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(companies)")}
+    if "card_status" not in cols:
+        conn.execute(
+            "ALTER TABLE companies ADD COLUMN card_status TEXT NOT NULL DEFAULT 'signal'"
+        )
+    if "triggers" not in cols:
+        conn.execute(
+            "ALTER TABLE companies ADD COLUMN triggers TEXT NOT NULL DEFAULT '[]'"
+        )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_companies_card_status ON companies(card_status)"
+    )
+
+
 def ensure_schema() -> None:
     global _migrations_applied
     if _migrations_applied:
         return
-    path = _migration_sql_path()
-    with open(path, "r", encoding="utf-8") as fh:
-        sql = fh.read()
+    base = os.path.join(os.path.dirname(__file__), "migrations")
     if db_backend() == "postgres":
-        import psycopg2
+        files = ["001_initial.sql", "003_company_status.sql"]
+        for fname in files:
+            path = os.path.join(base, fname)
+            with open(path, "r", encoding="utf-8") as fh:
+                sql = fh.read()
+            import psycopg2
 
-        conn = psycopg2.connect(os.environ["DATABASE_URL"])
-        try:
-            conn.autocommit = True
-            with conn.cursor() as cur:
-                cur.execute(sql)
-        finally:
-            conn.close()
+            conn = psycopg2.connect(os.environ["DATABASE_URL"])
+            try:
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    cur.execute(sql)
+            finally:
+                conn.close()
     else:
+        path = os.path.join(base, "001_initial_sqlite.sql")
+        with open(path, "r", encoding="utf-8") as fh:
+            sql = fh.read()
         db = sqlite_path()
         os.makedirs(os.path.dirname(db) or ".", exist_ok=True)
         conn = sqlite3.connect(db)
         try:
             conn.executescript(sql)
+            _ensure_sqlite_status_columns(conn)
             conn.commit()
         finally:
             conn.close()
@@ -174,19 +198,31 @@ def upsert_company(
     name: str = "",
     website: Optional[str] = None,
     sources: Optional[List[str]] = None,
+    card_status: Optional[str] = None,
+    triggers: Optional[List[str]] = None,
 ) -> None:
     inn = inn.strip()
     if not inn:
         return
     now = _now_ts()
     src = sources or []
+    existing = get_company(inn)
+    prev_status = (existing or {}).get("card_status") or company_status.STATUS_SIGNAL
+    if card_status is not None:
+        final_status = company_status.merge_status(prev_status, card_status)
+    else:
+        final_status = prev_status
+    merged_triggers = list((existing or {}).get("triggers") or [])
+    for t in triggers or []:
+        if t and t not in merged_triggers:
+            merged_triggers.append(t)
     with _connection() as conn:
         if db_backend() == "postgres":
             cur = conn.cursor()
             cur.execute(
                 """
-                INSERT INTO companies (inn, name, website, sources, created_at, updated_at)
-                VALUES (%s, %s, %s, %s::jsonb, NOW(), NOW())
+                INSERT INTO companies (inn, name, website, sources, card_status, triggers, created_at, updated_at)
+                VALUES (%s, %s, %s, %s::jsonb, %s, %s::jsonb, NOW(), NOW())
                 ON CONFLICT (inn) DO UPDATE SET
                     name = COALESCE(NULLIF(EXCLUDED.name, ''), companies.name),
                     website = COALESCE(EXCLUDED.website, companies.website),
@@ -198,22 +234,42 @@ def upsert_company(
                             SELECT jsonb_array_elements_text(EXCLUDED.sources)
                         ) s
                     ),
+                    card_status = EXCLUDED.card_status,
+                    triggers = EXCLUDED.triggers,
                     updated_at = NOW()
                 """,
-                (inn, name or "", website, _json_dump(src)),
+                (
+                    inn,
+                    name or "",
+                    website,
+                    _json_dump(src),
+                    final_status,
+                    _json_dump(merged_triggers),
+                ),
             )
         else:
             conn.execute(
                 """
-                INSERT INTO companies (inn, name, website, sources, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO companies (inn, name, website, sources, card_status, triggers, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (inn) DO UPDATE SET
                     name = COALESCE(NULLIF(excluded.name, ''), companies.name),
                     website = COALESCE(excluded.website, companies.website),
                     sources = excluded.sources,
+                    card_status = excluded.card_status,
+                    triggers = excluded.triggers,
                     updated_at = excluded.updated_at
                 """,
-                (inn, name or "", website, _json_dump(src), now, now),
+                (
+                    inn,
+                    name or "",
+                    website,
+                    _json_dump(src),
+                    final_status,
+                    _json_dump(merged_triggers),
+                    now,
+                    now,
+                ),
             )
 
 
@@ -418,7 +474,20 @@ def upsert_from_inbound(
     for cand in candidates:
         if upsert_from_inbound_candidate(company_inn, company_name, cand) is not None:
             count += 1
+    refresh_company_status(company_inn)
     return count
+
+
+def refresh_company_status(inn: str, *, ceo_name: Optional[str] = None) -> Dict[str, Any]:
+    row = get_company(inn) or {}
+    people = list_people(inn)
+    computed = company_status.compute_card_status(
+        people=people,
+        ceo_name=ceo_name,
+        triggers=row.get("triggers") or [],
+    )
+    upsert_company(inn, name=row.get("name") or "", card_status=computed)
+    return company_status.card_status_payload(computed, triggers=row.get("triggers") or [])
 
 
 def get_company(inn: str) -> Optional[Dict[str, Any]]:
@@ -437,7 +506,80 @@ def get_company(inn: str) -> Optional[Dict[str, Any]]:
         data = dict(row)
         data["sources"] = _json_load(data.get("sources"), [])
         data["enrich_payload"] = _json_load(data.get("enrich_payload"))
+        data["triggers"] = _json_load(data.get("triggers"), [])
+        data["card_status"] = data.get("card_status") or company_status.STATUS_SIGNAL
         return data
+
+
+def sync_status_from_payload(inn: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    card = company_status.compute_from_enrich_payload(payload)
+    upsert_company(
+        inn,
+        name=(payload.get("dadata_legal_profile") or {}).get("name") or "",
+        website=(payload.get("dadata_legal_profile") or {}).get("website"),
+        card_status=card["status"],
+        triggers=card.get("triggers"),
+    )
+    return card
+
+
+def list_companies(
+    *,
+    queue: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    with _connection() as conn:
+        if db_backend() == "postgres":
+            import psycopg2.extras
+
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            sql = "SELECT inn, name, website, card_status, triggers, updated_at FROM companies"
+            clauses: List[str] = []
+            params: List[Any] = []
+            if status:
+                clauses.append("card_status = %s")
+                params.append(status)
+            elif queue == company_status.QUEUE_REACHABLE:
+                clauses.append("card_status = %s")
+                params.append(company_status.STATUS_REACHABLE)
+            elif queue == company_status.QUEUE_IN_WORK:
+                clauses.append("card_status IN (%s, %s)")
+                params.extend([company_status.STATUS_SIGNAL, company_status.STATUS_NAMED])
+            if clauses:
+                sql += " WHERE " + " AND ".join(clauses)
+            sql += " ORDER BY updated_at DESC LIMIT %s"
+            params.append(limit)
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+        else:
+            sql = "SELECT inn, name, website, card_status, triggers, updated_at FROM companies"
+            clauses: List[str] = []
+            params: List[Any] = []
+            if status:
+                clauses.append("card_status = ?")
+                params.append(status)
+            elif queue == company_status.QUEUE_REACHABLE:
+                clauses.append("card_status = ?")
+                params.append(company_status.STATUS_REACHABLE)
+            elif queue == company_status.QUEUE_IN_WORK:
+                clauses.append("card_status IN (?, ?)")
+                params.extend([company_status.STATUS_SIGNAL, company_status.STATUS_NAMED])
+            if clauses:
+                sql += " WHERE " + " AND ".join(clauses)
+            sql += " ORDER BY updated_at DESC LIMIT ?"
+            params.append(limit)
+            cur = conn.execute(sql, tuple(params))
+            rows = cur.fetchall()
+    out = []
+    for row in rows:
+        item = dict(row)
+        st = item.get("card_status") or company_status.STATUS_SIGNAL
+        item["triggers"] = _json_load(item.get("triggers"), [])
+        item["status_label"] = company_status.status_label(st)
+        item["queue"] = company_status.queue_for_status(st)
+        out.append(item)
+    return out
 
 
 def list_people(company_inn: str) -> List[Dict[str, Any]]:
@@ -575,6 +717,7 @@ def save_enrich_payload(inn: str, payload: Dict[str, Any]) -> None:
                 "UPDATE companies SET enrich_payload = ?, updated_at = ? WHERE inn = ?",
                 (_json_dump(payload), _now_ts(), inn),
             )
+    sync_status_from_payload(inn, payload)
 
 
 def get_enrich_payload(inn: str) -> Optional[Dict[str, Any]]:
@@ -586,6 +729,12 @@ def get_enrich_payload(inn: str) -> Optional[Dict[str, Any]]:
         out = dict(payload)
         out["memory_hit"] = True
         out["cache_hit"] = True
+        row = get_company(inn)
+        if row:
+            out["company_card"] = company_status.card_status_payload(
+                row.get("card_status") or company_status.STATUS_SIGNAL,
+                triggers=row.get("triggers") or [],
+            )
         return out
     rebuilt = rebuild_enrich_from_memory(inn)
     if rebuilt:

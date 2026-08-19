@@ -22,6 +22,7 @@ except ImportError:
 import demo_mode
 import lpr_webhook
 import memory_store
+import company_status
 
 app = FastAPI(title="Sales Copilot")
 
@@ -770,10 +771,37 @@ def memory_get_company(inn: str):
     row = memory_store.get_company(inn)
     if not row:
         raise HTTPException(status_code=404, detail="Company not in memory")
+    st = row.get("card_status") or company_status.STATUS_SIGNAL
     return {
         "company": row,
+        "company_card": company_status.card_status_payload(
+            st, triggers=row.get("triggers") or []
+        ),
         "people": memory_store.list_people(inn),
         "power_map": memory_store.get_power_map(inn),
+    }
+
+
+@app.get("/api/copilot/company-queue")
+def copilot_company_queue(
+    queue: str = Query(
+        "in_work",
+        description="reachable — можно касаться; in_work — сигнал и есть имя",
+    ),
+    limit: int = Query(50, ge=1, le=200),
+):
+    q = (queue or "in_work").strip().lower()
+    if q not in (company_status.QUEUE_REACHABLE, company_status.QUEUE_IN_WORK):
+        raise HTTPException(
+            status_code=400,
+            detail="queue must be reachable or in_work",
+        )
+    items = memory_store.list_companies(queue=q, limit=limit)
+    return {
+        "queue": q,
+        "queue_label": "Можно касаться" if q == company_status.QUEUE_REACHABLE else "В работе",
+        "count": len(items),
+        "companies": items,
     }
 
 
@@ -963,9 +991,19 @@ def enrich_company_profile(
             pass
 
     try:
+        result["company_card"] = company_status.compute_from_enrich_payload(result)
         memory_store.save_enrich_payload(resolved_inn, result)
+        row = memory_store.get_company(resolved_inn)
+        if row:
+            result["company_card"] = company_status.card_status_payload(
+                row.get("card_status") or result["company_card"]["status"],
+                triggers=row.get("triggers") or result["company_card"].get("triggers"),
+            )
     except Exception:
-        pass
+        result.setdefault(
+            "company_card",
+            company_status.compute_from_enrich_payload(result),
+        )
     return result
 
 @app.post("/api/crm/create-deal")

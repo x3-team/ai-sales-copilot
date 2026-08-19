@@ -101,5 +101,27 @@ class MemoryStoreTest(unittest.TestCase):
         self.assertEqual(self.ms.slots_needing_search(complete), ["lpr", "lvr", "hr"])
 
 
+    def test_status_persisted_and_not_downgraded(self):
+        self.ms.ensure_schema()
+        payload = {
+            "dadata_legal_profile": {"inn": "4217184336", "name": "ООО «СУПЕР СИЛА»", "ceo": "Мальцев"},
+            "lpr_matrix": {
+                "lprs": [{
+                    "name": "Мальцев",
+                    "profile_url": "https://tenchat.ru/1197746487641",
+                    "profile_resolved": True,
+                    "contacts": {"email": None, "phone": None, "telegram": None},
+                }]
+            },
+            "hh_recruitment_profile": {"vacancies": [{"title": "1С"}]},
+            "sales_ai_insights": {"insights": []},
+        }
+        card = self.ms.sync_status_from_payload("4217184336", payload)
+        self.assertEqual(card["status"], "named")
+        self.ms.upsert_company("4217184336", card_status="signal")
+        row = self.ms.get_company("4217184336")
+        self.assertEqual(row["card_status"], "named")
+
+
 if __name__ == "__main__":
     unittest.main()

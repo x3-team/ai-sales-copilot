@@ -51,6 +51,20 @@
 
                 <div id="companyCard" class="p-5 border-b border-edge-subtle hidden"></div>
 
+                <div id="companyQueues" class="p-5 border-b border-edge-subtle hidden">
+                    <div class="mono text-[10px] uppercase tracking-[.12em] text-ink-mute mb-3">Очереди</div>
+                    <div class="space-y-4">
+                        <div>
+                            <div class="text-[12px] font-medium mb-2">Можно касаться</div>
+                            <div id="queueReachable" class="space-y-1 text-[12px] text-ink-dim"></div>
+                        </div>
+                        <div>
+                            <div class="text-[12px] font-medium mb-2">В работе</div>
+                            <div id="queueInWork" class="space-y-1 text-[12px] text-ink-dim"></div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="p-5">
                     <div class="mono text-[10px] uppercase tracking-[.12em] text-ink-mute mb-3">Интеграции</div>
                     <div id="integrationList" class="space-y-2"></div>
@@ -180,7 +194,47 @@ async function fetchWithTimeout(url, ms = 180000) {
     }
 }
 
-function emailBadge(c) {
+function statusChip(card) {
+    if (!card) return '';
+    const cls = {
+        signal: 'chip',
+        named: 'chip chip-probable',
+        reachable: 'chip chip-verified'
+    }[card.status] || 'chip';
+    return `<span class="${cls}">${card.status_label || card.status}</span>`;
+}
+
+function fmtContact(v) {
+    if (!v || v === '—' || v === '-') return '<span class="text-ink-mute">нет</span>';
+    return v;
+}
+
+async function loadCompanyQueues() {
+    const wrap = document.getElementById('companyQueues');
+    const reachableEl = document.getElementById('queueReachable');
+    const inWorkEl = document.getElementById('queueInWork');
+    try {
+        const [reachable, inWork] = await Promise.all([
+            fetch('/api/copilot/company-queue?queue=reachable').then(r => r.ok ? r.json() : { companies: [] }),
+            fetch('/api/copilot/company-queue?queue=in_work').then(r => r.ok ? r.json() : { companies: [] }),
+        ]);
+        const row = (c) => `
+            <button type="button" onclick="setQuery('${c.inn}')"
+                    class="w-full text-left py-1 hover:text-mint transition">
+                <span class="block truncate">${c.name || 'Компания'}</span>
+                <span class="mono text-[10px] text-ink-mute">${c.status_label || ''} · ${c.inn}</span>
+            </button>`;
+        reachableEl.innerHTML = (reachable.companies || []).length
+            ? reachable.companies.map(row).join('')
+            : '<span class="text-ink-mute mono text-[11px]">Пока нет</span>';
+        inWorkEl.innerHTML = (inWork.companies || []).length
+            ? inWork.companies.map(row).join('')
+            : '<span class="text-ink-mute mono text-[11px]">Пока нет</span>';
+        wrap.classList.remove('hidden');
+    } catch (e) {
+        wrap.classList.add('hidden');
+    }
+}
     if (c.is_verified) return `<span class="chip chip-verified">MX OK</span>`;
     if (c.email_badge) return `<span class="chip">${c.email_badge}</span>`;
     return `<span class="chip">Не проверен</span>`;
@@ -337,7 +391,7 @@ async function runAgent(e) {
         setWorkspaceBar(`агент выполняет шаг 2 из ${STEPS.length}`, true, companyLabel);
 
         logLine(`ЕГРЮЛ: ${legal.name}`, 'done');
-        renderCompanyCard(legal);
+        renderCompanyCard(legal, enriched.company_card);
 
         currentStep = 2; renderStepper();
         setAgentStatus(`агент выполняет шаг 3 из ${STEPS.length}`, true);
@@ -369,6 +423,7 @@ async function runAgent(e) {
         currentStep = 6; renderStepper();
         setAgentStatus('готово · 6 из 6', false);
         setWorkspaceBar('готово · 6 из 6', false, companyLabel);
+        loadCompanyQueues();
         if (enriched.cache_hit) toast('Результат из кэша');
         else if (enriched.sources_status_note) toast(enriched.sources_status_note);
 
@@ -390,7 +445,7 @@ async function runAgent(e) {
     }
 }
 
-function renderCompanyCard(legal) {
+function renderCompanyCard(legal, card) {
     const el = document.getElementById('companyCard');
     el.classList.remove('hidden');
     const meta = [
@@ -400,6 +455,7 @@ function renderCompanyCard(legal) {
     el.innerHTML = `
         <div class="text-[14px] font-semibold leading-snug mb-1.5">${legal.name}</div>
         <div class="mono text-[11px] text-ink-mute mb-2">ИНН ${legal.inn}</div>
+        ${card ? `<div class="flex items-center gap-2 mb-2">${statusChip(card)}<span class="mono text-[10px] text-ink-mute">${card.queue_label || ''}</span></div>` : ''}
         <div class="text-[12px] text-ink-dim leading-relaxed">${meta}</div>
         ${legal.website ? `<a href="${legal.website}" target="_blank" rel="noopener" class="mono text-[11px] text-mint hover:text-mint-hover transition mt-2 inline-block">${legal.website.replace(/^https?:\/\//, '')} →</a>` : ''}
     `;
@@ -422,7 +478,10 @@ function renderSignals(data) {
                 <h2 class="text-[18px] font-semibold">Сигналы спроса</h2>
                 <p class="text-[13px] text-ink-dim mt-0.5">Открытые вакансии — прямой признак активной потребности</p>
             </div>
-            <span class="chip chip-mint">Lead score ${score}</span>
+            <div class="flex items-center gap-2 flex-wrap">
+                ${data.company_card ? statusChip(data.company_card) : ''}
+                <span class="chip chip-mint">Lead score ${score}</span>
+            </div>
         </div>
         ${vacHtml ? `<div class="grid sm:grid-cols-2 xl:grid-cols-4 gap-3">${vacHtml}</div>`
                   : `<div class="card p-4 text-[13px] text-ink-dim">Активных вакансий не найдено.</div>`}
@@ -481,8 +540,8 @@ function renderContacts(lprs) {
                 class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-[10px] bg-inset border border-edge-subtle flex-wrap text-left ${free ? '' : 'blurred cursor-pointer hover:border-edge-strong transition'}">
             <span class="mono text-[10px] text-ink-mute w-[92px] shrink-0">${slot}</span>
             <div class="flex items-center gap-4 flex-1 min-w-0">
-                <span class="mono text-[11px] ${free ? 'text-ink-dim' : 'text-locked'} truncate">${c.email || '—'}</span>
-                <span class="mono text-[11px] ${free ? 'text-ink-dim' : 'text-locked'} truncate hidden sm:inline">${c.phone || '—'}</span>
+                <span class="mono text-[11px] ${free ? 'text-ink-dim' : 'text-locked'} truncate">${fmtContact(c.email)}</span>
+                <span class="mono text-[11px] ${free ? 'text-ink-dim' : 'text-locked'} truncate hidden sm:inline">${fmtContact(c.phone)}</span>
             </div>
             ${free ? emailBadge(c) : `<span class="mono text-[11px] text-ink-mute">заблокировано</span>`}
         </button>`;
@@ -631,6 +690,7 @@ function toast(msg) {
 renderStepper();
 loadSources();
 loadOffer();
+loadCompanyQueues();
 
 const initial = new URLSearchParams(location.search).get('q');
 if (initial) { document.getElementById('query').value = initial; runAgent(); }
