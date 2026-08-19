@@ -1201,22 +1201,40 @@ class PowerMapBuilder:
         ceo_name: str,
         product_domain: str = "1C",
         website_url: Optional[str] = None,
+        only_slots: Optional[Tuple[str, ...]] = None,
+        prefilled_by_slot: Optional[Dict[str, Dict]] = None,
     ) -> List[Dict]:
         from scraper import ContactEnrichmentEngine, ProfileDorkResolver
 
         clean_name = IdentityLayer._clean_company_name(company_name) or "Компания"
-        ProfileDorkResolver.prefetch_company_pool(clean_name, product_domain)
-        email_domain = ContactEnrichmentEngine.resolve_email_domain(website_url, clean_name)
-
-        candidates = IdentityLayer.discover_candidates(
-            clean_name, inn, ceo_name, product_domain, website_url
-        )
+        prefilled_by_slot = prefilled_by_slot or {}
+        need_discovery = only_slots is None or any(s not in prefilled_by_slot for s in (only_slots or ()))
+        candidates: List[Dict] = []
+        if need_discovery:
+            ProfileDorkResolver.prefetch_company_pool(clean_name, product_domain)
+            ContactEnrichmentEngine.resolve_email_domain(website_url, clean_name)
+            candidates = IdentityLayer.discover_candidates(
+                clean_name, inn, ceo_name, product_domain, website_url
+            )
         used_names = set()
         used_keys = set()
         power_map = []
 
         slot_order = ("ceo", "lpr", "lvr", "hr")
         for slot in slot_order:
+            if only_slots is not None and slot not in only_slots:
+                cached = prefilled_by_slot.get(slot)
+                if cached:
+                    power_map.append(cached)
+                else:
+                    power_map.append(cls._empty_slot_entry(slot, product_domain))
+                continue
+            if slot in prefilled_by_slot and prefilled_by_slot[slot]:
+                power_map.append(prefilled_by_slot[slot])
+                name = prefilled_by_slot[slot].get("name") or ""
+                if name and name not in ("—", "Контакт не найден"):
+                    used_names.add(name.lower())
+                continue
             cfg = IdentityLayer.STAKEHOLDER_CONFIG[slot]
             picked = IdentityLayer.pick_for_slot(candidates, slot, used_names, used_keys)
 
@@ -1376,6 +1394,26 @@ class PowerMapBuilder:
             power_map.append(entry)
 
         return power_map
+
+    @classmethod
+    def _empty_slot_entry(cls, slot: str, product_domain: str) -> Dict:
+        cfg = IdentityLayer.STAKEHOLDER_CONFIG[slot]
+        return {
+            "power_type": cfg["power_type"],
+            "role": cls._default_role_for_slot(slot, product_domain),
+            "name": "Контакт не найден",
+            "source": "memory (slot skipped)",
+            "source_type": "memory",
+            "identity_source": "memory",
+            "profile_url": "",
+            "profile_resolved": False,
+            "profile_platform": "",
+            "profile_confidence": 0,
+            "profile_search_engine": "",
+            "dork_query": "",
+            "pitch_focus": cls._pitch_for_slot(slot, product_domain, cfg["pitch_focus"]),
+            "contacts": cls._contacts_from_sources("", {}, None),
+        }
 
     @classmethod
     def _default_role_for_slot(cls, slot: str, product_domain: str) -> str:

@@ -24,6 +24,11 @@ import requests
 
 import lpr_job_store
 
+try:
+    import memory_store
+except ImportError:
+    memory_store = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 WEBHOOK_BASE_URL = (os.environ.get("WEBHOOK_BASE_URL") or os.environ.get("PUBLIC_BASE_URL") or "").rstrip("/")
@@ -361,6 +366,16 @@ def handle_inbound_webhook(job_id: str, payload: Dict[str, Any]) -> Dict[str, An
             "lpr_webhook candidates_redacted=%s",
             json.dumps([_redact_contact(c) for c in candidates], ensure_ascii=False),
         )
+        if memory_store is not None:
+            try:
+                inn = (job.get("inn") or "").strip()
+                company_name = job.get("company_name") or ""
+                if not inn and candidates:
+                    inn = (candidates[0].get("company_inn") or "").strip()
+                if inn:
+                    memory_store.upsert_from_inbound(inn, company_name, candidates)
+            except Exception:
+                logger.exception("memory_store upsert failed job_id=%s", job_id)
     _persist_job(job)
     return get_job_public(job_id)
 
@@ -510,12 +525,13 @@ def candidates_to_lpr_entries(candidates: List[Dict[str, Any]]) -> List[Dict[str
         platform_label = {"tenchat": "TenChat", "linkedin": "LinkedIn"}.get(platform, platform)
         resolved = bool(c.get("profile_resolved") and c.get("profile_url"))
         conf = int(c.get("confidence_base") or c.get("profile_confidence") or 0)
-        email = c.get("email") or "—"
-        phone = c.get("phone") or "—"
+        email = c.get("email")
+        phone = c.get("phone")
+        telegram = c.get("telegram")
         out.append({
             "power_type": _POWER_TYPE.get(hint, _POWER_TYPE["lpr"]),
             "role": (f"{c.get('role') or 'Контакт'}" + (f" · {c['company']}" if c.get("company") else "")),
-            "name": c.get("name") or "—",
+            "name": c.get("name") or "",
             "source": c.get("source") or "LPR Agent · webhook",
             "source_type": c.get("source_type") or "identity",
             "identity_source": c.get("source") or "LPR Agent · webhook",
@@ -528,12 +544,12 @@ def candidates_to_lpr_entries(candidates: List[Dict[str, Any]]) -> List[Dict[str
             "pitch_focus": "",
             "contacts": {
                 "phone": phone,
-                "phone_type": "LPR Agent",
+                "phone_type": "LPR Agent" if phone else None,
                 "email": email,
-                "email_status": "webhook" if email != "—" else "unknown",
-                "email_badge": "Webhook" if email != "—" else "—",
-                "is_verified": email != "—",
-                "telegram": c.get("telegram") or "—",
+                "email_status": "webhook" if email else None,
+                "email_badge": "Webhook" if email else None,
+                "is_verified": bool(email),
+                "telegram": telegram,
                 "search_link_tenchat": c.get("profile_url") if platform == "tenchat" else "",
                 "search_link_linkedin": c.get("profile_url") if platform == "linkedin" else "",
                 "profile_badge": f"Direct • {platform_label}" if resolved else "LPR Agent",

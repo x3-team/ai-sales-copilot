@@ -21,6 +21,7 @@ except ImportError:
 
 import demo_mode
 import lpr_webhook
+import memory_store
 
 app = FastAPI(title="Sales Copilot")
 
@@ -259,16 +260,34 @@ STATIC_PROSPECT_DATABASE = [
     }
 ]
 
-def generate_dynamic_lprs(inn: str, company_name: str, ceo_from_dadata: str, trigger_info: str = "", website_url: str = None):
+def generate_dynamic_lprs(
+    inn: str,
+    company_name: str,
+    ceo_from_dadata: str,
+    trigger_info: str = "",
+    website_url: str = None,
+    stored_lprs: Optional[List[dict]] = None,
+):
     clean_name = company_name.replace('ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ', '').replace('ООО', '').replace('ПАО', '').replace('АО', '').strip(' "')
     if not clean_name:
         clean_name = "Компания"
 
-    power_map = ProfessionalNetworkScraper.search_and_enrich_power_map_for_company(
-        clean_name, inn, ceo_from_dadata,
-        product_domain=current_seller_profile.product_name,
-        website_url=website_url,
-    )
+    prefilled = memory_store.lprs_by_slot(stored_lprs or [])
+    missing = memory_store.slots_needing_search(stored_lprs or [])
+    if stored_lprs and not missing:
+        power_map = list(stored_lprs)
+    else:
+        only_slots = tuple(missing) if missing else None
+        skip_prefilled = {k: v for k, v in prefilled.items() if k not in (missing or [])}
+        power_map = ProfessionalNetworkScraper.search_and_enrich_power_map_for_company(
+            clean_name, inn, ceo_from_dadata,
+            product_domain=current_seller_profile.product_name,
+            website_url=website_url,
+            only_slots=only_slots,
+            prefilled_by_slot=skip_prefilled if only_slots else None,
+        )
+        if stored_lprs:
+            power_map = memory_store.merge_lpr_lists(stored_lprs, power_map)
 
     email_domain = ContactEnrichmentEngine.resolve_email_domain(website_url, clean_name)
 
@@ -516,6 +535,16 @@ def copilot_sources_status():
                     else "Задайте WEBHOOK_BASE_URL (https) и WEBHOOK_HMAC_SECRET на Render"
                 ),
             },
+            "memory": {
+                "configured": memory_store.is_configured(),
+                "store": memory_store.store_info(),
+                "label": "Persistent memory (Postgres/SQLite)",
+                "message": (
+                    "DATABASE_URL задан — компании/люди/контакты сохраняются между рестартами"
+                    if memory_store.db_backend() == "postgres"
+                    else "Локальный SQLite fallback — задайте DATABASE_URL на Render для Postgres"
+                ),
+            },
         },
     }
 
@@ -588,9 +617,20 @@ class LprJobCreateRequest(BaseModel):
     auto_submit: bool = True
 
 
+@app.on_event("startup")
+def startup_memory_schema():
+    try:
+        memory_store.ensure_schema()
+    except Exception:
+        pass
+
+
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "memory": memory_store.store_info(),
+    }
 
 
 @app.post("/api/copilot/lpr-jobs")
@@ -682,7 +722,7 @@ async def lpr_inbound_webhook_legacy():
 
 @app.post("/api/copilot/lpr-jobs/{job_id}/apply-to-enrich")
 def apply_lpr_job_to_enrich(job_id: str, inn: str = Query(..., description="ИНН компании в кэше enrich")):
-    """Подмешивает готовых кандидатов из webhook-job в кэш enrich по ИНН."""
+    """Подмешивает готовых кандидатов из webhook-job в persistent memory по ИНН."""
     try:
         job = lpr_webhook.get_job(job_id)
     except KeyError as exc:
@@ -690,14 +730,17 @@ def apply_lpr_job_to_enrich(job_id: str, inn: str = Query(..., description="ИН
     if job.get("status") != "completed":
         raise HTTPException(status_code=409, detail=f"Job status: {job.get('status')}")
 
-    cached = demo_mode.cache_get(inn)
-    if not cached:
-        raise HTTPException(status_code=404, detail="Enrich cache miss — сначала запустите enrich по этому ИНН")
-
-    extra = lpr_webhook.candidates_to_lpr_entries(job.get("candidates") or [])
-    if not extra:
+    candidates = job.get("candidates") or []
+    if not candidates:
         raise HTTPException(status_code=422, detail="Job completed but candidates empty")
 
+    memory_store.upsert_from_inbound(inn, job.get("company_name") or "", candidates)
+
+    cached = memory_store.get_enrich_payload(inn)
+    if not cached:
+        raise HTTPException(status_code=404, detail="Enrich memory miss — сначала запустите enrich по этому ИНН")
+
+    extra = lpr_webhook.candidates_to_lpr_entries(candidates)
     merged = dict(cached)
     lprs = list((merged.get("lpr_matrix") or {}).get("lprs") or [])
     seen_urls = {p.get("profile_url") for p in lprs if p.get("profile_url")}
@@ -711,8 +754,35 @@ def apply_lpr_job_to_enrich(job_id: str, inn: str = Query(..., description="ИН
 
     merged["lpr_matrix"] = {"total_lprs": len(lprs), "lprs": lprs}
     merged["lpr_webhook_applied"] = {"job_id": job_id, "added": len(extra)}
-    demo_mode.cache_set(inn, merged)
+    memory_store.save_enrich_payload(inn, merged)
     return merged
+
+
+@app.get("/api/copilot/memory/companies/{inn}")
+def memory_get_company(inn: str):
+    """Чтение сохранённой компании и power map из persistent memory."""
+    row = memory_store.get_company(inn)
+    if not row:
+        raise HTTPException(status_code=404, detail="Company not in memory")
+    return {
+        "company": row,
+        "people": memory_store.list_people(inn),
+        "power_map": memory_store.get_power_map(inn),
+    }
+
+
+@app.get("/api/copilot/memory/people")
+def memory_list_people(inn: str = Query(..., description="ИНН компании")):
+    people = memory_store.list_people(inn)
+    if not people:
+        raise HTTPException(status_code=404, detail="No people in memory for this INN")
+    return {"inn": inn, "count": len(people), "people": people}
+
+
+@app.get("/api/copilot/memory/contacts")
+def memory_list_contacts(person_id: int = Query(..., description="ID person из memory")):
+    contacts = memory_store.list_contacts(person_id)
+    return {"person_id": person_id, "count": len(contacts), "contacts": contacts}
 
 @app.get("/api/copilot/demo-companies")
 def copilot_demo_companies():
@@ -747,11 +817,23 @@ def enrich_company_profile(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     if not refresh:
-        cached = demo_mode.cache_get(resolved_inn)
+        cached = memory_store.get_enrich_payload(resolved_inn)
         if cached:
             cached = dict(cached)
             cached["cache_hit"] = True
-            return cached
+            cached["memory_hit"] = True
+            missing = memory_store.slots_needing_search(
+                (cached.get("lpr_matrix") or {}).get("lprs") or []
+            )
+            cached["slots_needing_search"] = missing
+            if not missing:
+                return cached
+
+    stored_lprs = None
+    if not refresh:
+        stored_row = memory_store.get_enrich_payload(resolved_inn)
+        if stored_row:
+            stored_lprs = (stored_row.get("lpr_matrix") or {}).get("lprs") or []
 
     dadata_res = search_company(query=resolved_inn)
     
@@ -794,6 +876,7 @@ def enrich_company_profile(
         company_info["ceo"],
         f"Вакансии: {len(vacancies)} на hh.ru",
         website_url=website_url or None,
+        stored_lprs=stored_lprs,
     )
     
     score = 75
@@ -834,6 +917,7 @@ def enrich_company_profile(
         "sources_status_note": sources_note,
         "demo_mode": False,
         "cache_hit": False,
+        "memory_hit": False,
         "query_resolved": {"input": raw, "inn": resolved_inn},
         "lpr_matrix": {
             "total_lprs": len(lpr_list),
@@ -872,7 +956,10 @@ def enrich_company_profile(
         except ValueError:
             pass
 
-    demo_mode.cache_set(resolved_inn, result)
+    try:
+        memory_store.save_enrich_payload(resolved_inn, result)
+    except Exception:
+        pass
     return result
 
 @app.post("/api/crm/create-deal")
