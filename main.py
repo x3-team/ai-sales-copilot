@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Query, Body, Response, Header, Reque
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from scraper import ProfessionalNetworkScraper, ProfileDorkResolver, ContactEnrichmentEngine
 
 try:
@@ -644,6 +644,13 @@ def startup_memory_schema():
         lpr_job_store.init_db()
     except Exception:
         pass
+    try:
+        from scripts.seed_live_companies import apply_live_seed
+
+        if memory_store.get_company("4217184336") is None:
+            apply_live_seed(memory_store)
+    except Exception:
+        pass
 
 
 @app.get("/health")
@@ -816,6 +823,70 @@ def copilot_company_queue(
         "queue_label": "Можно касаться" if q == company_status.QUEUE_REACHABLE else "В работе",
         "count": len(items),
         "companies": items,
+    }
+
+
+@app.get("/api/copilot/queue-summary")
+def copilot_queue_summary():
+    """Counts for UI dashboards — active companies only."""
+    reachable = memory_store.list_companies(queue=company_status.QUEUE_REACHABLE, limit=200)
+    in_work = memory_store.list_companies(queue=company_status.QUEUE_IN_WORK, limit=200)
+    return {
+        "reachable_count": len(reachable),
+        "in_work_count": len(in_work),
+        "reachable": reachable[:12],
+        "in_work": in_work[:12],
+        "memory": memory_store.store_info(),
+    }
+
+
+@app.post("/api/copilot/hh-scan")
+def copilot_hh_scan_1c(
+    limit: int = Query(5, ge=1, le=12, description="Сколько компаний с вакансиями 1С"),
+    product_keyword: str = Query("1С", description="Ключевое слово продукта"),
+):
+    """
+    Живой скан HH.ru по широким 1С-ключам.
+    В memory попадают только компании с подтверждённым ИНН; закрытые юрлица пропускаются.
+    """
+    from identity_layer import HHVacancyParser
+    from live_companies import is_active_company
+
+    raw = HHVacancyParser.scan_keyword_vacancies(
+        product_keyword, limit=limit, require_inn=True,
+    )
+    ingested: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, str]] = []
+    for vac in raw:
+        inn = (vac.get("inn") or "").strip()
+        employer = (vac.get("employer") or "").strip()
+        if not inn:
+            skipped.append({"employer": employer, "reason": "no_inn"})
+            continue
+        if not is_active_company(inn):
+            skipped.append({"employer": employer, "inn": inn, "reason": "inactive"})
+            continue
+        memory_store.upsert_from_hh_vacancy(inn, employer, vac)
+        row = memory_store.get_company(inn)
+        ingested.append({
+            "inn": inn,
+            "name": employer,
+            "vacancy_title": vac.get("title"),
+            "vacancy_url": vac.get("url"),
+            "contact_name": vac.get("contact_name") or "",
+            "contact_email": vac.get("contact_email") or "",
+            "contact_phone": vac.get("contact_phone") or "",
+            "contacts_hidden": bool(vac.get("contacts_hidden")),
+            "card_status": (row or {}).get("card_status"),
+            "status_label": company_status.status_label((row or {}).get("card_status") or ""),
+        })
+    return {
+        "product_keyword": product_keyword,
+        "found_vacancies": len(raw),
+        "ingested_count": len(ingested),
+        "skipped_count": len(skipped),
+        "companies": ingested,
+        "skipped": skipped[:10],
     }
 
 

@@ -91,6 +91,38 @@
                     <div id="stepper" class="flex items-center gap-0 min-w-[720px]"></div>
                 </div>
 
+                <!-- Queue dashboard (all breakpoints) -->
+                <div id="queueDashboard" class="px-5 sm:px-6 pt-5 shrink-0">
+                    <div class="card p-4 sm:p-5">
+                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                            <div>
+                                <h2 class="text-[16px] font-semibold">Очереди компаний</h2>
+                                <p class="text-[12px] text-ink-dim mt-0.5">Спрос на 1С · только подтверждённый ИНН · открытые контакты HH</p>
+                            </div>
+                            <button type="button" id="hhScanBtn" onclick="runHhScan()" class="btn btn-primary !py-2 !px-3.5 !text-[13px] shrink-0">
+                                Скан HH 1С
+                            </button>
+                        </div>
+                        <div class="grid sm:grid-cols-2 gap-4">
+                            <div class="rounded-xl border border-edge-subtle bg-inset p-3.5">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-[13px] font-medium">Можно касаться</span>
+                                    <span id="reachableCount" class="chip chip-verified">0</span>
+                                </div>
+                                <div id="queueReachableMain" class="space-y-1 text-[12px] text-ink-dim min-h-[48px]"></div>
+                            </div>
+                            <div class="rounded-xl border border-edge-subtle bg-inset p-3.5">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-[13px] font-medium">В работе</span>
+                                    <span id="inWorkCount" class="chip chip-probable">0</span>
+                                </div>
+                                <div id="queueInWorkMain" class="space-y-1 text-[12px] text-ink-dim min-h-[48px]"></div>
+                            </div>
+                        </div>
+                        <p id="hhScanStatus" class="mono text-[11px] text-ink-mute mt-3 hidden"></p>
+                    </div>
+                </div>
+
                 <!-- Query -->
                 <div class="px-5 sm:px-6 pt-5 shrink-0">
                     <form onsubmit="runAgent(event)" class="flex flex-col sm:flex-row gap-2.5 max-w-[720px]">
@@ -112,12 +144,9 @@
                         <h2 class="text-[18px] font-semibold mb-2">Введите ИНН или сайт компании</h2>
                         <p class="text-[13px] leading-relaxed text-ink-dim mb-5">
                             Агент соберёт карту власти: CEO, бизнес-заказчик, IT-эксперт и инициатор закупки.
+                            Или выберите компанию из очереди «В работе» слева / выше.
                         </p>
-                        <div class="flex flex-wrap gap-2 justify-center">
-                            <button type="button" onclick="setQuery('0278181110')" class="chip hover:border-edge-strong transition">0278181110 · ПР-Лизинг</button>
-                            <button type="button" onclick="setQuery('7709257050')" class="chip hover:border-edge-strong transition">7709257050 · 1С-Софт</button>
-                            <button type="button" onclick="setQuery('7709440038')" class="chip hover:border-edge-strong transition">7709440038 · Мегаполис</button>
-                        </div>
+                        <div id="emptyQueueHints" class="flex flex-wrap gap-2 justify-center mb-3"></div>
                     </div>
                 </div>
             </main>
@@ -213,28 +242,75 @@ async function loadCompanyQueues() {
     const wrap = document.getElementById('companyQueues');
     const reachableEl = document.getElementById('queueReachable');
     const inWorkEl = document.getElementById('queueInWork');
+    const reachableMain = document.getElementById('queueReachableMain');
+    const inWorkMain = document.getElementById('queueInWorkMain');
+    const reachableCount = document.getElementById('reachableCount');
+    const inWorkCount = document.getElementById('inWorkCount');
+    const emptyHints = document.getElementById('emptyQueueHints');
+
+    const row = (c) => `
+        <button type="button" onclick="setQuery('${c.inn}')"
+                class="w-full text-left py-1 hover:text-mint transition">
+            <span class="block truncate">${c.name || 'Компания'}</span>
+            <span class="mono text-[10px] text-ink-mute">${c.status_label || ''} · ${c.inn}</span>
+        </button>`;
+    const chip = (c) => `
+        <button type="button" onclick="setQuery('${c.inn}')"
+                class="chip hover:border-edge-strong transition">${c.inn} · ${(c.name || '').slice(0, 22)}</button>`;
+
     try {
-        const [reachable, inWork] = await Promise.all([
-            fetch('/api/copilot/company-queue?queue=reachable').then(r => r.ok ? r.json() : { companies: [] }),
-            fetch('/api/copilot/company-queue?queue=in_work').then(r => r.ok ? r.json() : { companies: [] }),
-        ]);
-        const row = (c) => `
-            <button type="button" onclick="setQuery('${c.inn}')"
-                    class="w-full text-left py-1 hover:text-mint transition">
-                <span class="block truncate">${c.name || 'Компания'}</span>
-                <span class="mono text-[10px] text-ink-mute">${c.status_label || ''} · ${c.inn}</span>
-            </button>`;
-        reachableEl.innerHTML = (reachable.companies || []).length
-            ? reachable.companies.map(row).join('')
-            : '<span class="text-ink-mute mono text-[11px]">Пока нет</span>';
-        inWorkEl.innerHTML = (inWork.companies || []).length
-            ? inWork.companies.map(row).join('')
-            : '<span class="text-ink-mute mono text-[11px]">Пока нет</span>';
+        const summary = await fetch('/api/copilot/queue-summary').then(r => r.ok ? r.json() : null);
+        if (!summary) throw new Error('no summary');
+        const reachable = summary.reachable || [];
+        const inWork = summary.in_work || [];
+        const reachableHtml = reachable.length
+            ? reachable.map(row).join('')
+            : '<span class="text-ink-mute mono text-[11px]">Пока нет — запустите «Скан HH 1С»</span>';
+        const inWorkHtml = inWork.length
+            ? inWork.map(row).join('')
+            : '<span class="text-ink-mute mono text-[11px]">Загрузка seed…</span>';
+
+        reachableEl.innerHTML = reachableHtml;
+        inWorkEl.innerHTML = inWorkHtml;
+        reachableMain.innerHTML = reachableHtml;
+        inWorkMain.innerHTML = inWorkHtml;
+        reachableCount.textContent = String(summary.reachable_count ?? reachable.length);
+        inWorkCount.textContent = String(summary.in_work_count ?? inWork.length);
         wrap.classList.remove('hidden');
+
+        if (emptyHints) {
+            emptyHints.innerHTML = inWork.slice(0, 4).map(chip).join('');
+        }
     } catch (e) {
         wrap.classList.add('hidden');
     }
 }
+
+async function runHhScan() {
+    const btn = document.getElementById('hhScanBtn');
+    const status = document.getElementById('hhScanStatus');
+    btn.disabled = true;
+    btn.textContent = 'Сканируем HH…';
+    status.classList.remove('hidden');
+    status.textContent = 'HH.ru: поиск вакансий 1С (консультант, аналитик, ЗУП, ERP…) — 30–90 сек';
+    try {
+        const res = await fetchWithTimeout('/api/copilot/hh-scan?limit=5', 120000);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'Скан не удался');
+        status.textContent = `HH: найдено ${data.found_vacancies}, в memory ${data.ingested_count} компаний с ИНН`;
+        await loadCompanyQueues();
+        toast(`HH scan: +${data.ingested_count} компаний`);
+    } catch (err) {
+        status.textContent = err.name === 'AbortError'
+            ? 'Таймаут скана HH — попробуйте снова'
+            : (err.message || 'Ошибка скана');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Скан HH 1С';
+    }
+}
+
+function emailBadge(c) {
     if (c.is_verified) return `<span class="chip chip-verified">MX OK</span>`;
     if (c.email_badge) return `<span class="chip">${c.email_badge}</span>`;
     return `<span class="chip">Не проверен</span>`;
@@ -465,11 +541,22 @@ function renderSignals(data) {
     const vac = data.hh_recruitment_profile || { vacancies: [] };
     const insights = (data.sales_ai_insights || {}).insights || [];
     const score = (data.sales_ai_insights || {}).lead_score || 0;
-    const vacHtml = (vac.vacancies || []).slice(0, 4).map(v => `
+    const vacHtml = (vac.vacancies || []).slice(0, 4).map(v => {
+        const contactBits = [
+            v.hr_name || v.contact_name,
+            v.hr_email || v.contact_email,
+            v.hr_phone || v.contact_phone,
+        ].filter(x => x && x.trim());
+        const contactLine = contactBits.length
+            ? `<div class="mono text-[10px] text-mint mt-2 truncate">${contactBits.join(' · ')}</div>`
+            : (v.contacts_hidden ? '<div class="mono text-[10px] text-ink-mute mt-2">контакт скрыт</div>' : '');
+        return `
         <a href="${v.url || '#'}" target="_blank" rel="noopener" class="card card-hover p-3.5 block">
             <div class="text-[13px] font-medium leading-snug mb-1">${v.title || 'Вакансия'}</div>
             <div class="mono text-[11px] text-ink-mute">${v.salary || 'з/п не указана'}</div>
-        </a>`).join('');
+            ${contactLine}
+        </a>`;
+    }).join('');
 
     add(`
     <section class="fade-up">

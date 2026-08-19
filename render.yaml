@@ -1,38 +1,20 @@
 # Blueprint: AI Sales Copilot (FastAPI)
-# Deploy: Render Dashboard → New → Blueprint → connect repo
-databases:
-  - name: ai-sales-copilot-db
-    plan: basic_256mb
-    region: frankfurt
-    databaseName: sales_copilot
-    postgresMajorVersion: "16"
-
+# Live MVP: SQLite memory (ephemeral on free tier) — no extra Postgres/disk required.
 services:
   - type: web
     name: ai-sales-copilot
     runtime: python
     plan: free
     region: frankfurt
-    branch: main
+    branch: cursor/lpr-webhook-45d2
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
-    # Persistent disk: jobs survive Render restarts (requires Starter+ plan)
-    disk:
-      name: lpr-jobs-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.0"
-      - key: DATABASE_URL
-        fromDatabase:
-          name: ai-sales-copilot-db
-          property: connectionString
-      - key: LPR_JOBS_DB_PATH
-        value: /var/data/lpr_jobs.db
-      - key: COPILOT_MEMORY_DB_PATH
-        value: /var/data/copilot_memory.db
+      - key: DEMO_MODE
+        value: "0"
       - key: WEBHOOK_BASE_URL
         sync: false
       - key: WEBHOOK_HMAC_SECRET
@@ -43,5 +25,3 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
-      - key: DEMO_MODE
-        value: "0"

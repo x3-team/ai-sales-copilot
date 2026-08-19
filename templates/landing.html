@@ -280,6 +280,39 @@
     </div>
 </section>
 
+<!-- ============ LIVE QUEUES ============ -->
+<section class="py-16 border-t border-edge-subtle">
+    <div class="max-w-[1240px] mx-auto px-6">
+        <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6">
+            <div>
+                <h2 class="text-[26px] font-semibold tracking-[-0.015em]">Живые очереди</h2>
+                <p class="text-[14px] text-ink-dim mt-1">Компании со спросом на 1С и открытым контактом HH — обновляется после скана</p>
+            </div>
+            <a href="/app" class="btn btn-ghost !py-2 !px-4 !text-[13px] shrink-0">Открыть кабинет →</a>
+        </div>
+        <div class="grid sm:grid-cols-2 gap-4">
+            <div class="card p-5">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-[14px] font-medium">Можно касаться</span>
+                    <span id="landingReachableCount" class="chip chip-verified">—</span>
+                </div>
+                <div id="landingReachable" class="space-y-2 text-[13px] text-ink-dim min-h-[64px]">
+                    <span class="mono text-[11px] text-ink-mute">Загрузка…</span>
+                </div>
+            </div>
+            <div class="card p-5">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-[14px] font-medium">В работе</span>
+                    <span id="landingInWorkCount" class="chip chip-probable">—</span>
+                </div>
+                <div id="landingInWork" class="space-y-2 text-[13px] text-ink-dim min-h-[64px]">
+                    <span class="mono text-[11px] text-ink-mute">Загрузка…</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
 <!-- ============ CTA ============ -->
 <section class="py-20 border-y border-edge-accent bg-mint-bg">
     <div class="max-w-[1240px] mx-auto px-6 text-center">
@@ -297,6 +330,31 @@
         const q = document.getElementById('heroQuery').value.trim();
         window.location.href = q ? `/app?q=${encodeURIComponent(q)}` : '/app';
     }
+
+    async function loadLandingQueues() {
+        const row = (c) => `
+            <a href="/app?q=${encodeURIComponent(c.inn)}" class="block hover:text-mint transition">
+                <span class="font-medium">${c.name || 'Компания'}</span>
+                <span class="mono text-[11px] text-ink-mute block">${c.status_label || ''} · ${c.inn}</span>
+            </a>`;
+        try {
+            const data = await fetch('/api/copilot/queue-summary').then(r => r.json());
+            document.getElementById('landingReachableCount').textContent = data.reachable_count ?? 0;
+            document.getElementById('landingInWorkCount').textContent = data.in_work_count ?? 0;
+            document.getElementById('landingReachable').innerHTML = (data.reachable || []).length
+                ? data.reachable.map(row).join('')
+                : '<span class="mono text-[11px] text-ink-mute">Пока нет — запустите скан в кабинете</span>';
+            document.getElementById('landingInWork').innerHTML = (data.in_work || []).length
+                ? data.in_work.map(row).join('')
+                : '<span class="mono text-[11px] text-ink-mute">Seed загружается при старте сервиса</span>';
+        } catch (e) {
+            document.getElementById('landingReachable').innerHTML =
+                '<span class="mono text-[11px] text-ink-mute">Сервис прогревается…</span>';
+            document.getElementById('landingInWork').innerHTML =
+                '<a href="/app" class="text-mint mono text-[11px]">Открыть кабинет →</a>';
+        }
+    }
+    loadLandingQueues();
 </script>
 </body>
 </html>
