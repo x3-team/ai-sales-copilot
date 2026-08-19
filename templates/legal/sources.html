@@ -1,31 +1,253 @@
 <section>
     <h2>Как мы собираем карту власти</h2>
-    <p>Сервис не полагается на один источник. Каждая роль подтверждается независимо, а рядом с контактом всегда указано, откуда он получен.</p>
+    <p>Сервис не полагается на один источник. Каждая роль подтверждается независимо, а рядом с контактом всегда указано, откуда он получен. Ниже — полный каталог источников: те, что уже используются, и те, что планируются к подключению.</p>
 </section>
 
 <section>
-    <h2>Базовые источники</h2>
-    <p>Работают всегда и не требуют подключения ключей.</p>
+    <h2>Уже используется в сервисе</h2>
+    <p>Работают сейчас — часть без ключей, часть по модели BYOS (Bring Your Own Session).</p>
+    <div class="table-wrap">
     <table>
-        <tr><th>Источник</th><th>Что даёт</th><th>Роли</th></tr>
-        <tr><td>DaData (ЕГРЮЛ)</td><td>Реквизиты, руководитель, адрес, вид деятельности</td><td>CEO</td></tr>
-        <tr><td>HH.ru</td><td>Открытые вакансии, роли и контактные лица</td><td>ЛВР, ЛДПР</td></tr>
-        <tr><td>Хабр Карьера</td><td>Сигналы найма в IT</td><td>ЛВР</td></tr>
-        <tr><td>Сайт компании</td><td>Разделы «Команда», «О компании», «Контакты»</td><td>ЛПР, CEO</td></tr>
-        <tr><td>TenChat (публичный)</td><td>Страницы компаний и открытые профили</td><td>ЛПР</td></tr>
-        <tr><td>Сетка (публичный)</td><td>Профили специалистов из IT и digital</td><td>ЛВР, ЛДПР</td></tr>
+        <tr><th>Источник</th><th>Что даёт</th><th>Доступ</th><th>Роли</th></tr>
+        <tr><td>DaData (ЕГРЮЛ)</td><td>ИНН, ОГРН, CEO, адрес, ОКВЭД, сайт</td><td>API, платный (есть бесплатный лимит)</td><td>CEO</td></tr>
+        <tr><td>HH.ru (HTML)</td><td>Открытые вакансии, роли, контактные лица</td><td>Публичный парсинг</td><td>ЛВР, ЛДПР, ЛПР</td></tr>
+        <tr><td>HH Employer API</td><td>Резюме с опытом работы в компании</td><td>OAuth, BYOS</td><td>ЛПР, ЛВР</td></tr>
+        <tr><td>Хабр Карьера</td><td>IT-вакансии, сигналы найма</td><td>Публичный парсинг</td><td>ЛВР</td></tr>
+        <tr><td>TenChat (публичный)</td><td>Страницы компаний, открытые профили</td><td>Парсинг + поисковый dork</td><td>ЛПР</td></tr>
+        <tr><td>TenChat BYOS</td><td>Расширенный поиск сотрудников компании</td><td>Токен пользователя</td><td>ЛПР</td></tr>
+        <tr><td>Сетка (Setka)</td><td>Профили специалистов IT и digital</td><td>Парсинг + dork</td><td>ЛВР, ЛДПР</td></tr>
+        <tr><td>Сайт компании</td><td>«Команда», «О нас», контакты</td><td>Парсинг</td><td>CEO, ЛПР</td></tr>
+        <tr><td>Bing / DuckDuckGo / Yandex</td><td>Профили TenChat, Setka, LinkedIn, HH</td><td>Поисковая выдача (dork)</td><td>Все</td></tr>
+        <tr><td>LinkedIn</td><td>Профили (через dork, без официального API)</td><td>Ограниченно</td><td>ЛПР, ЛВР</td></tr>
+        <tr><td>Google Gemini API</td><td>Генерация персональных питчей</td><td>API, платный</td><td>—</td></tr>
     </table>
+    </div>
 </section>
 
 <section>
-    <h2>Дополнительные источники</h2>
-    <p>Подключаются по желанию и расширяют охват. Без них Сервис работает в базовом режиме.</p>
+    <h2>Tier 1 — высокий приоритет</h2>
+    <p>Максимум ценности для RU B2B: реестры, госзакупки, вакансии, профсети.</p>
+
+    <h3>Реестры и юрлица</h3>
+    <div class="table-wrap">
     <table>
-        <tr><th>Источник</th><th>Что добавляет</th><th>Что требуется</th></tr>
-        <tr><td>HH Employer API</td><td>ФИО и должности по опыту работы в компании</td><td>Аккаунт работодателя с доступом к базе резюме</td></tr>
-        <tr><td>TenChat (авторизованный)</td><td>Расширенный поиск сотрудников компании</td><td>Токен доступа вашей учётной записи</td></tr>
+        <tr><th>Источник</th><th>Что даёт</th><th>API</th><th>Цена</th></tr>
+        <tr><td>ЕГРЮЛ / ЕГРИП (ФНС)</td><td>Полный реестр юрлиц</td><td>Bulk XML/CSV; API через агрегаторы</td><td>Бесплатно (bulk)</td></tr>
+        <tr><td>Реестр МСП (ФНС)</td><td>Статус и категория МСП</td><td>Открытые данные</td><td>Бесплатно</td></tr>
+        <tr><td>Контур.Фокус API</td><td>ЕГРЮЛ, финансы, связи, суды, контакты</td><td>REST API</td><td>Платный</td></tr>
+        <tr><td>СПARK-Interfax API</td><td>Финансы, риски, структура владения</td><td>REST / SOAP</td><td>Enterprise</td></tr>
+        <tr><td>Checko API</td><td>ЕГРЮЛ, финансы, связи</td><td>REST API</td><td>Freemium</td></tr>
+        <tr><td>Zachestnyibiznes API</td><td>Реквизиты, суды, финансы</td><td>REST API</td><td>Freemium</td></tr>
+        <tr><td>Rusprofile</td><td>Финансы, суды, связи</td><td>Партнёрский доступ</td><td>Платный</td></tr>
+        <tr><td>СБИС (Sbis.ru)</td><td>Контакты, выручка, связи</td><td>API для интеграторов</td><td>Платный</td></tr>
+        <tr><td>Seldon Basis API</td><td>BI по компаниям, госзакупки, суды</td><td>REST API</td><td>Платный</td></tr>
+        <tr><td>ExportBase</td><td>Контакты, email, телефоны B2B</td><td>API</td><td>Платный</td></tr>
     </table>
-    <p>Статус подключения виден в рабочем кабинете. Ключи хранятся в вашем окружении — подробности в разделе <a href="/security">Безопасность</a>.</p>
+    </div>
+
+    <h3>Госзакупки и триггеры «сейчас покупают»</h3>
+    <div class="table-wrap">
+    <table>
+        <tr><th>Источник</th><th>Что даёт</th><th>API</th><th>Цена</th></tr>
+        <tr><td>ЕИС (zakupki.gov.ru)</td><td>Тендеры 44-ФЗ и 223-ФЗ</td><td>SOAP / REST</td><td>Бесплатно</td></tr>
+        <tr><td>ГосПлан (gosplan.info)</td><td>Агрегатор закупок</td><td>REST API</td><td>Freemium</td></tr>
+        <tr><td>Контур.Закупки</td><td>Поиск и аналитика тендеров</td><td>API</td><td>Платный</td></tr>
+        <tr><td>Тендеры.Про / Bicotender</td><td>Агрегация тендеров</td><td>API</td><td>Платный</td></tr>
+        <tr><td>Реестр недобросовестных поставщиков</td><td>Риск-профиль контрагента</td><td>Открытые данные</td><td>Бесплатно</td></tr>
+    </table>
+    </div>
+
+    <h3>Вакансии и HR-сигналы</h3>
+    <div class="table-wrap">
+    <table>
+        <tr><th>Источник</th><th>Что даёт</th><th>API</th><th>Цена</th></tr>
+        <tr><td>SuperJob API</td><td>Вакансии, ограниченный доступ к резюме</td><td>REST API</td><td>Freemium / платный</td></tr>
+        <tr><td>Trudvsem.ru (Роструд)</td><td>Государственная биржа труда</td><td>Открытые данные</td><td>Бесплатно</td></tr>
+        <tr><td>GeekJob</td><td>IT-вакансии</td><td>Парсинг</td><td>Бесплатно</td></tr>
+        <tr><td>GetMatch</td><td>IT-рекрутинг, senior-роли</td><td>Парсинг / партнёрство</td><td>—</td></tr>
+        <tr><td>Avito Работа</td><td>Вакансии (массовый сегмент, регионы)</td><td>Нет публичного API</td><td>Парсинг</td></tr>
+        <tr><td>Зарплата.ру</td><td>Дополнительный охват вакансий</td><td>API у партнёров</td><td>Платный</td></tr>
+    </table>
+    </div>
+
+    <h3>Профессиональные сети (RU)</h3>
+    <div class="table-wrap">
+    <table>
+        <tr><th>Источник</th><th>Что даёт</th><th>API</th><th>Цена</th></tr>
+        <tr><td>VK API</td><td>Группы компаний, посты, публичная активность</td><td>REST API</td><td>Бесплатно (лимиты)</td></tr>
+        <tr><td>Telegram</td><td>Каналы компаний, публичные @username</td><td>Bot API / MTProto</td><td>Бесплатно</td></tr>
+        <tr><td>Infostart.ru</td><td>Профили 1С-специалистов</td><td>Парсинг</td><td>Бесплатно</td></tr>
+        <tr><td>partners.1c.ru</td><td>Список сертифицированных партнёров 1С</td><td>Парсинг</td><td>Бесплатно</td></tr>
+        <tr><td>e-disclosure (MOEX)</td><td>Отчётность публичных компаний</td><td>API / выгрузки</td><td>Бесплатно</td></tr>
+    </table>
+    </div>
+</section>
+
+<section>
+    <h2>Tier 2 — обогащение контактов и верификация</h2>
+
+    <h3>Email и телефон</h3>
+    <div class="table-wrap">
+    <table>
+        <tr><th>Источник</th><th>Что даёт</th><th>API</th><th>Цена</th></tr>
+        <tr><td>DaData (email / phone / name)</td><td>Стандартизация и подсказки</td><td>API</td><td>Платный</td></tr>
+        <tr><td>2GIS API</td><td>Телефоны, адреса, рубрики</td><td>REST API</td><td>Freemium</td></tr>
+        <tr><td>Яндекс Справочник / Business API</td><td>Карточки организаций</td><td>API</td><td>Платный</td></tr>
+        <tr><td>Google Places API</td><td>Локальные компании</td><td>REST</td><td>Pay-per-use</td></tr>
+        <tr><td>Hunter.io</td><td>Email по домену</td><td>REST API</td><td>Freemium</td></tr>
+        <tr><td>Snov.io</td><td>Email finder + verify</td><td>REST API</td><td>Freemium</td></tr>
+        <tr><td>Apollo.io</td><td>B2B contacts DB</td><td>REST API</td><td>Платный</td></tr>
+        <tr><td>Lusha / RocketReach</td><td>Email + телефон</td><td>REST API</td><td>Платный</td></tr>
+        <tr><td>Clearbit Enrichment</td><td>Firmographics + contacts</td><td>REST API</td><td>Платный</td></tr>
+        <tr><td>NeverBounce / ZeroBounce</td><td>Email verification</td><td>API</td><td>Pay-per-check</td></tr>
+        <tr><td>In-house SMTP validator</td><td>Проверка MX / SMTP</td><td>Собственный код</td><td>—</td></tr>
+    </table>
+    </div>
+
+    <h3>Поиск профилей (усиление dork)</h3>
+    <div class="table-wrap">
+    <table>
+        <tr><th>Источник</th><th>Что даёт</th><th>API</th><th>Цена</th></tr>
+        <tr><td>SerpAPI / Serper.dev</td><td>Google / Bing / Yandex SERP</td><td>REST API</td><td>Pay-per-query</td></tr>
+        <tr><td>Bing Web Search API</td><td>Поиск профилей</td><td>REST API (Azure)</td><td>Freemium</td></tr>
+        <tr><td>Google Custom Search JSON API</td><td>Точечный site:-поиск</td><td>REST API</td><td>100 req/day free</td></tr>
+        <tr><td>Yandex Search API</td><td>RU-выдача</td><td>REST API</td><td>Платный</td></tr>
+    </table>
+    </div>
+</section>
+
+<section>
+    <h2>Tier 3 — intent signals и «почему сейчас»</h2>
+
+    <h3>Новости и медиа</h3>
+    <div class="table-wrap">
+    <table>
+        <tr><th>Источник</th><th>Что даёт</th><th>API</th><th>Цена</th></tr>
+        <tr><td>Google News RSS</td><td>Новости по компании</td><td>RSS</td><td>Бесплатно</td></tr>
+        <tr><td>Яндекс.Новости</td><td>RU-медиа</td><td>RSS / парсинг</td><td>Бесплатно</td></tr>
+        <tr><td>RBC Companies API</td><td>Новости, котировки</td><td>API</td><td>Платный</td></tr>
+        <tr><td>Interfax API</td><td>Деловые новости</td><td>API</td><td>Платный</td></tr>
+        <tr><td>CNews / VC.ru / Habr</td><td>IT-новости, кейсы</td><td>RSS / парсинг</td><td>Бесплатно</td></tr>
+        <tr><td>Brand Analytics / YouScan</td><td>Social listening</td><td>API</td><td>Платный</td></tr>
+        <tr><td>Medialogia</td><td>СМИ-мониторинг</td><td>API</td><td>Платный</td></tr>
+    </table>
+    </div>
+
+    <h3>Технологический стек (для ЛВР)</h3>
+    <div class="table-wrap">
+    <table>
+        <tr><th>Источник</th><th>Что даёт</th><th>API</th><th>Цена</th></tr>
+        <tr><td>BuiltWith API</td><td>CMS, analytics, CRM на сайте</td><td>REST API</td><td>Платный</td></tr>
+        <tr><td>Wappalyzer API</td><td>Tech stack</td><td>REST API</td><td>Freemium</td></tr>
+        <tr><td>SimilarWeb API</td><td>Трафик, источники</td><td>REST API</td><td>Платный</td></tr>
+        <tr><td>Shodan / Censys</td><td>Инфраструктура, exposed services</td><td>API</td><td>Freemium</td></tr>
+    </table>
+    </div>
+
+    <h3>Суды и риски</h3>
+    <div class="table-wrap">
+    <table>
+        <tr><th>Источник</th><th>Что даёт</th><th>API</th><th>Цена</th></tr>
+        <tr><td>Картотека арбитража (kad.arbitr.ru)</td><td>Арбитражные дела</td><td>Через агрегаторы</td><td>Freemium</td></tr>
+        <tr><td>Casebook (Кontur)</td><td>Суды, исполнительные производства</td><td>API</td><td>Платный</td></tr>
+        <tr><td>ФССП</td><td>Исполнительные производства</td><td>Открытые данные</td><td>Бесплатно</td></tr>
+        <tr><td>Fedresurs / ЕФРСБ</td><td>Банкротство, залоги</td><td>API</td><td>Freemium</td></tr>
+    </table>
+    </div>
+</section>
+
+<section>
+    <h2>Tier 4 — отраслевые (1С / IT / digital)</h2>
+    <div class="table-wrap">
+    <table>
+        <tr><th>Источник</th><th>Что даёт</th><th>Доступ</th></tr>
+        <tr><td>Infostart.ru</td><td>1С-разработчики, рейтинг, специализация</td><td>Парсинг</td></tr>
+        <tr><td>forum.mista.ru</td><td>1С-сообщество, экспертные контакты</td><td>Парсинг</td></tr>
+        <tr><td>1c.ru / partners.1c.ru</td><td>Сертифицированные партнёры 1С</td><td>Парсинг</td></tr>
+        <tr><td>TAdviser</td><td>IT-ландшафт компаний</td><td>Парсинг / подписка</td></tr>
+        <tr><td>CNews Analytics</td><td>Рейтинги IT-интеграторов</td><td>Платный</td></tr>
+        <tr><td>ICT.Moscow / Russoft</td><td>IT-компании, отраслевые списки</td><td>Открытые данные</td></tr>
+        <tr><td>GitHub / GitLab API</td><td>Open-source активность компании</td><td>REST API</td></tr>
+    </table>
+    </div>
+</section>
+
+<section>
+    <h2>Tier 5 — международные</h2>
+    <p>Для компаний с export-присутствием или международными HQ.</p>
+    <div class="table-wrap">
+    <table>
+        <tr><th>Источник</th><th>Что даёт</th><th>API</th><th>Цена</th></tr>
+        <tr><td>LinkedIn Sales Navigator</td><td>People search</td><td>Нет официального API</td><td>$</td></tr>
+        <tr><td>LinkedIn Marketing API</td><td>Company pages</td><td>Ограниченный API</td><td>$</td></tr>
+        <tr><td>Crunchbase API</td><td>Стартапы, инвестиции</td><td>REST API</td><td>Платный</td></tr>
+        <tr><td>OpenCorporates API</td><td>Глобальный реестр компаний</td><td>REST API</td><td>Freemium</td></tr>
+        <tr><td>SEC EDGAR</td><td>US public filings</td><td>REST API</td><td>Бесплатно</td></tr>
+        <tr><td>Companies House (UK)</td><td>UK companies</td><td>REST API</td><td>Бесплатно</td></tr>
+        <tr><td>PitchBook / Dealroom</td><td>VC / PE данные</td><td>API</td><td>Enterprise</td></tr>
+    </table>
+    </div>
+</section>
+
+<section>
+    <h2>Tier 6 — CRM и delivery</h2>
+    <div class="table-wrap">
+    <table>
+        <tr><th>Источник</th><th>Назначение</th></tr>
+        <tr><td>AmoCRM API</td><td>Выгрузка карты власти в CRM</td></tr>
+        <tr><td>Bitrix24 REST API</td><td>RU-рынок, интеграции с 1С</td></tr>
+        <tr><td>HubSpot / Pipedrive / Salesforce</td><td>CRM клиентов на западных платформах</td></tr>
+        <tr><td>Unisender / SendPulse / Mailganer</td><td>Email-рассылка питчей</td></tr>
+        <tr><td>Telegram Bot API</td><td>Отправка питчей в мессенджер</td></tr>
+        <tr><td>WhatsApp Business API</td><td>Альтернативный канал outreach</td></tr>
+        <tr><td>Calendly / Cal.com API</td><td>Booking после первого контакта</td></tr>
+    </table>
+    </div>
+</section>
+
+<section>
+    <h2>Открытые данные РФ (бесплатно)</h2>
+    <p>Требуют собственной ETL-загрузки, но не имеют лицензионных ограничений.</p>
+    <div class="table-wrap">
+    <table>
+        <tr><th>Реестр</th><th>Что даёт</th><th>URL</th></tr>
+        <tr><td>ЕГРЮЛ / ЕГРИП</td><td>Все юрлица РФ</td><td>egrul.nalog.ru</td></tr>
+        <tr><td>ЕИС Закупки</td><td>Государственные и корпоративные тендеры</td><td>zakupki.gov.ru</td></tr>
+        <tr><td>Реестр МСП</td><td>Категория бизнеса</td><td>ofd.nalog.ru</td></tr>
+        <tr><td>Росстат</td><td>Отраслевая статистика</td><td>rosstat.gov.ru</td></tr>
+        <tr><td>data.gov.ru</td><td>9000+ наборов открытых данных</td><td>data.gov.ru</td></tr>
+        <tr><td>Росаккредитация</td><td>Сертификаты соответствия</td><td>fsa.gov.ru</td></tr>
+        <tr><td>Роспатент / ФИПС</td><td>Патенты</td><td>fips.ru</td></tr>
+        <tr><td>Реестр программного обеспечения</td><td>Отечественное ПО</td><td>reestr.digital.gov.ru</td></tr>
+        <tr><td>Банк России</td><td>Кредитные организации</td><td>cbr.ru</td></tr>
+    </table>
+    </div>
+</section>
+
+<section>
+    <h2>Приоритетный roadmap интеграций</h2>
+    <div class="table-wrap">
+    <table>
+        <tr><th>#</th><th>Источник</th><th>Effort</th><th>Impact</th><th>Зачем</th></tr>
+        <tr><td>1</td><td>ЕИС zakupki.gov.ru</td><td>Средний</td><td>Очень высокий</td><td>Готовый buying trigger</td></tr>
+        <tr><td>2</td><td>Infostart.ru</td><td>Низкий</td><td>Высокий (1C)</td><td>Прямые ЛВР в нише 1С</td></tr>
+        <tr><td>3</td><td>Контур.Фокус / Checko</td><td>Низкий</td><td>Высокий</td><td>Выручка, штат, суды — scoring</td></tr>
+        <tr><td>4</td><td>SerpAPI / Bing Search API</td><td>Низкий</td><td>Средний</td><td>Стабильный dork без блокировок</td></tr>
+        <tr><td>5</td><td>SuperJob API</td><td>Средний</td><td>Средний</td><td>Второй job board</td></tr>
+        <tr><td>6</td><td>2GIS / Яндекс Справочник</td><td>Средний</td><td>Средний</td><td>Телефоны SMB</td></tr>
+        <tr><td>7</td><td>VK API</td><td>Низкий</td><td>Средний</td><td>Публичная активность компании</td></tr>
+        <tr><td>8</td><td>BuiltWith / Wappalyzer</td><td>Низкий</td><td>Средний</td><td>Tech stack → триггер для ЛВР</td></tr>
+        <tr><td>9</td><td>Hunter.io / Snov.io</td><td>Низкий</td><td>Средний</td><td>Email enrichment</td></tr>
+        <tr><td>10</td><td>Fedresurs / kad.arbitr</td><td>Средний</td><td>Средний</td><td>Risk flags</td></tr>
+    </table>
+    </div>
+</section>
+
+<section>
+    <h2>Юридические границы (152-ФЗ)</h2>
+    <p><strong>Разрешено:</strong> ЕГРЮЛ и открытые реестры; публичные вакансии; публичные профили и страницы компаний; сайты компаний; API с лицензией и BYOS (ключи клиента); госзакупки.</p>
+    <p><strong>Требует условий:</strong> HH Employer API и TenChat BYOS — только с согласия владельца аккаунта; email enrichment — только B2B-контекст, с opt-out и указанием источника; парсинг — с учётом robots.txt и пользовательского соглашения источника.</p>
+    <p><strong>Запрещено:</strong> утёкшие базы; «пробив» физлиц; обход paywall и авторизации.</p>
 </section>
 
 <section>
@@ -41,4 +263,5 @@
 <section>
     <h2>Как читать статусы</h2>
     <p>У каждого контакта есть отметка достоверности. <strong>Verified</strong> — профиль подтверждён и связан с компанией. <strong>Probable</strong> — роль подтверждена вакансией или публикацией, но конкретное лицо не установлено. Если подтверждения нет, слот остаётся пустым.</p>
+    <p>Статус подключения optional-источников (HH Employer, TenChat BYOS) виден в рабочем кабинете. Ключи хранятся в вашем окружении — подробности в разделе <a href="/security">Безопасность</a>.</p>
 </section>
