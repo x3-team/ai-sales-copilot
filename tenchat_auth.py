@@ -134,23 +134,23 @@ class TenChatAuthClient:
         1) POST search/elastic (если доступен)
         2) Fallback: парсинг /connect?query=
         """
-        if not cls.is_configured():
+        if not cls.is_configured() or not query.strip():
             return []
 
-        results = cls._search_via_api(query, limit)
+        results = cls._search_via_api(query.strip(), limit)
         if results:
             return results
-        return cls._search_via_connect_page(query, limit)
+        return cls._search_via_connect_page(query.strip(), limit)
 
     @classmethod
     def _search_via_api(cls, query: str, limit: int) -> List[Dict]:
         session = cls._get_session()
+        # Не используем search/default — отдаёт рекомендации, не результаты поиска.
         endpoints = [
             (f"{cls.API_PREFIX}/account/v2/search/elastic", {"phrase": query, "page": 0, "size": limit}),
             (f"{cls.API_PREFIX}/account/search/elastic", {"phrase": query, "page": 0, "size": limit}),
             (f"{cls.API_PREFIX}/account/search/elastic", {"searchText": query, "pageNumber": 0, "pageSize": limit}),
             (f"{cls.API_PREFIX}/account/search", {"query": query}),
-            (f"{cls.API_PREFIX}/account/search/default", {}),
         ]
         headers = cls._auth_headers({
             "Accept": "application/json",
@@ -266,35 +266,87 @@ class TenChatAuthClient:
         company_name: str,
         role_hint: str = "директор",
         limit: int = 10,
+        inn: str = "",
     ) -> List[Dict]:
-        """Несколько auth-поисков под компанию + роль."""
+        """Auth-поиск под компанию с обязательной верификацией профиля."""
         if not cls.is_configured():
             return []
-        queries = [
+
+        from identity_layer import ProfileVerifier
+
+        queries = []
+        for q in (
             f"{company_name} {role_hint}",
             company_name,
             f"{company_name} 1с",
-            role_hint,
-        ]
+            f"{company_name} финансовый директор",
+            f"{company_name} hr",
+        ):
+            if q.strip() and q not in queries:
+                queries.append(q.strip())
+
         seen = set()
         out = []
+        role_keywords = ("директор", "1с", "it", "финансов", "коммерч", "hr", "рекрут")
         for q in queries:
             for person in cls.search_people(q, limit=limit):
                 key = person.get("profile_url") or person.get("username")
-                if key in seen:
+                if not key or key in seen:
+                    continue
+                verified = cls._verify_person_for_company(person, company_name, inn, role_keywords)
+                if not verified:
                     continue
                 seen.add(key)
-                out.append({
-                    "name": person.get("name") or "—",
-                    "role": person.get("role") or role_hint,
-                    "source": person.get("source", "TenChat Auth"),
-                    "source_type": person.get("source_type", "tenchat_auth"),
-                    "confidence_base": 65,
-                    "profile_url": person.get("profile_url"),
-                    "profile_resolved": True,
-                    "profile_platform": "TenChat",
-                    "company_hint": person.get("company", ""),
-                })
-            if len(out) >= limit:
-                break
-        return out[:limit]
+                out.append(verified)
+                if len(out) >= limit:
+                    return out
+        return out
+
+    @classmethod
+    def _verify_person_for_company(
+        cls,
+        person: Dict,
+        company_name: str,
+        inn: str,
+        role_keywords: tuple,
+    ) -> Optional[Dict]:
+        from identity_layer import ProfileVerifier
+
+        url = person.get("profile_url") or ""
+        if not url or "/search?" in url:
+            return None
+
+        profile = ProfileVerifier.parse_tenchat_profile(url)
+        api_company = person.get("company") or person.get("company_hint") or ""
+        blob = " ".join([
+            profile.get("raw_title", ""),
+            profile.get("company", ""),
+            profile.get("description", ""),
+            api_company,
+            person.get("name", ""),
+            person.get("role", ""),
+        ])
+        company_score = ProfileVerifier.company_match_score(blob, company_name, inn)
+        if company_score < 15:
+            return None
+
+        name = profile.get("name") or person.get("name") or "—"
+        role = profile.get("role") or person.get("role") or ""
+        conf = ProfileVerifier.compute_confidence(
+            profile, company_name, inn, "lpr", role_keywords, name
+        )
+        if conf < 45:
+            return None
+
+        return {
+            "name": name,
+            "role": role or "Специалист (TenChat)",
+            "source": person.get("source", "TenChat Auth (verified)"),
+            "source_type": person.get("source_type", "tenchat_auth"),
+            "confidence_base": conf,
+            "profile_url": url,
+            "profile_resolved": True,
+            "profile_platform": "TenChat",
+            "company_verified": True,
+            "company_hint": profile.get("company") or api_company,
+        }

@@ -65,9 +65,12 @@ class ProfileVerifier:
         if inn and inn in blob:
             return 30
         translit_tokens = re.findall(r"[a-z0-9]{3,}", blob)
-        for token in re.split(r"[\s\"«»\-]+", clean):
-            if len(token) > 3 and any(token[:4] in t for t in translit_tokens):
-                return 15
+        from scraper import ContactEnrichmentEngine
+        compact = ContactEnrichmentEngine.transliterate(clean)
+        if compact:
+            for slug in translit_tokens:
+                if len(slug) >= 5 and (slug in compact or compact in slug):
+                    return 20
         return 0
 
     @classmethod
@@ -99,7 +102,8 @@ class ProfileVerifier:
         score = 0
         if profile.get("url") and profile.get("platform"):
             score += 20
-        score += cls.company_match_score(blob, company_name, inn)
+        company_pts = cls.company_match_score(blob, company_name, inn)
+        score += company_pts
         score += cls.role_match_score(blob, role_keywords)
         if name_hint and name_hint not in ("—", "Контакт не найден", "Руководитель"):
             for part in name_hint.lower().split():
@@ -107,6 +111,8 @@ class ProfileVerifier:
                     score += 15
         if stakeholder_type == "ceo" and any(k in blob.lower() for k in ("генеральный", "ceo", "директор")):
             score += 10
+        if company_pts == 0 and stakeholder_type != "ceo":
+            return min(score, 35)
         return min(score, 98)
 
     @classmethod
@@ -376,8 +382,68 @@ class TenChatCompanyParser:
                             "profile_url": f"https://tenchat.ru/{inn}",
                             "company_page": f"https://tenchat.ru/{inn}",
                         })
+            found.extend(cls._probe_profile_slugs(company_name, inn))
         except Exception:
             pass
+        return found
+
+    @classmethod
+    def _probe_profile_slugs(cls, company_name: str, inn: str = "") -> List[Dict]:
+        """Публичные профили TenChat по типовым slug (prleasing и т.п.)."""
+        from scraper import ContactEnrichmentEngine
+
+        clean = company_name.replace("ООО", "").replace("ПАО", "").replace("АО", "").strip(' "')
+        tokens = [t for t in re.split(r"[\s\-«»\"]+", clean.lower()) if len(t) > 2]
+        translit = ContactEnrichmentEngine.transliterate(clean).lower()
+        slug_candidates = []
+        if translit:
+            slug_candidates.append(translit.replace(" ", ""))
+        if tokens:
+            slug_candidates.append("".join(tokens))
+            slug_candidates.append(tokens[0])
+            if len(tokens) >= 2:
+                slug_candidates.append(tokens[0] + tokens[1][:4])
+        if "лизинг" in clean.lower():
+            slug_candidates.extend(["prleasing", "prlizing"])
+
+        seen = set()
+        found = []
+        for slug in slug_candidates:
+            slug = re.sub(r"[^a-z0-9_-]", "", slug)
+            if len(slug) < 4 or slug in seen:
+                continue
+            seen.add(slug)
+            url = f"https://tenchat.ru/{slug}"
+            profile = ProfileVerifier.parse_tenchat_profile(url)
+            if not profile.get("raw_title"):
+                continue
+            match = ProfileVerifier.company_match_score(
+                profile.get("raw_title", "") + " " + profile.get("company", ""),
+                company_name,
+                inn,
+            )
+            if match < 15:
+                continue
+            name = profile.get("name") or profile.get("role") or "—"
+            role = profile.get("role") or "Профиль TenChat"
+            conf = ProfileVerifier.compute_confidence(
+                profile, company_name, inn, "lpr",
+                IdentityLayer.STAKEHOLDER_CONFIG["lpr"]["role_keywords"],
+            )
+            if conf < 45:
+                continue
+            found.append({
+                "name": name,
+                "role": role,
+                "source": "TenChat Slug Probe (verified)",
+                "source_type": "tenchat_verified",
+                "confidence_base": max(conf, 55),
+                "profile_url": url,
+                "profile_resolved": True,
+                "profile_platform": "TenChat",
+                "company_verified": True,
+                "stakeholder_hint": IdentityLayer.classify_stakeholder(role, "tenchat_verified"),
+            })
         return found
 
 
@@ -385,6 +451,14 @@ class IdentityLayer:
     """
     Clay-grade pipeline: Identity → Profile Resolve → Verify → Power Map slot.
     """
+
+    TENCHAT_AUTH_TYPES = frozenset({
+        "tenchat_auth", "tenchat_auth_api", "tenchat_auth_connect",
+    })
+    TRUSTED_SOURCE_TYPES = frozenset({
+        "dadata", "website", "hh_vacancy", "hh_vacancy_it", "hh_vacancy_hr",
+        "habr_vacancy", "tenchat_verified",
+    })
 
     STAKEHOLDER_CONFIG = {
         "ceo": {
@@ -442,9 +516,11 @@ class IdentityLayer:
         try:
             from tenchat_auth import TenChatAuthClient
             if TenChatAuthClient.is_configured():
-                for role_hint in ("директор", "1с", "hr"):
+                for role_hint in ("директор", "1с", "hr", "финансовый"):
                     candidates.extend(
-                        TenChatAuthClient.discover_candidates_for_company(clean, role_hint, limit=5)
+                        TenChatAuthClient.discover_candidates_for_company(
+                            clean, role_hint, limit=5, inn=inn,
+                        )
                     )
         except Exception:
             pass
@@ -485,7 +561,7 @@ class IdentityLayer:
             )
             if conf >= 35 or ProfileVerifier.company_match_score(
                 profile.get("raw_title", ""), company_name, inn
-            ) >= 15:
+            ) >= 20:
                 name = profile.get("name") or item.get("title", "").split("—")[0].strip()
                 if name and name != "—":
                     found.append({
@@ -498,6 +574,7 @@ class IdentityLayer:
                         "profile_platform": "TenChat",
                         "profile_resolved": True,
                         "profile_confidence": conf,
+                        "company_verified": True,
                     })
         return found
 
@@ -545,9 +622,27 @@ class IdentityLayer:
         return a_l in b_l or b_l in a_l or any(t in b_l for t in a_l.split() if len(t) > 3)
 
     @classmethod
+    def _candidate_eligible(cls, candidate: Dict, slot: str) -> bool:
+        source_type = candidate.get("source_type", "")
+        if source_type in cls.TENCHAT_AUTH_TYPES:
+            if not candidate.get("company_verified"):
+                return False
+            if candidate.get("confidence_base", 0) < 50:
+                return False
+        if source_type in cls.TENCHAT_AUTH_TYPES and candidate.get("stakeholder_hint") != slot:
+            return candidate.get("confidence_base", 0) >= 65
+        name = candidate.get("name", "—")
+        if name not in ("—", "Контакт не найден") and source_type not in cls.TRUSTED_SOURCE_TYPES:
+            if not candidate.get("company_verified") and candidate.get("confidence_base", 0) < 55:
+                return False
+        return True
+
+    @classmethod
     def pick_for_slot(cls, candidates: List[Dict], slot: str, used_names: set, used_keys: set) -> Optional[Dict]:
         scored = []
         for c in candidates:
+            if not cls._candidate_eligible(c, slot):
+                continue
             name = c.get("name", "—")
             source_key = c.get("vacancy_url") or c.get("profile_url") or f"{name}|{c.get('source_type','')}"
             if source_key in used_keys:
@@ -560,16 +655,19 @@ class IdentityLayer:
             role_bonus = 25 if slot == "lvr" and c.get("source_type") in ("hh_vacancy_it", "habr_vacancy") else 0
             role_bonus += 25 if slot == "hr" and c.get("source_type") == "hh_vacancy_hr" else 0
             role_bonus += 15 if slot == "lpr" and c.get("source_type") == "tenchat_verified" else 0
-            if name == "—" and slot != hint and hint != "lpr":
-                base -= 10
+            if name == "—" and slot in ("lvr", "hr") and c.get("source_type") in ("hh_vacancy_it", "hh_vacancy_hr", "habr_vacancy"):
+                base += 10
+            elif name == "—" and slot != hint:
+                base -= 15
             scored.append((base + bonus + role_bonus, c, source_key))
         scored.sort(key=lambda x: x[0], reverse=True)
+        min_slot_score = 45 if slot in ("lvr", "hr") else 50
         for score, cand, source_key in scored:
-            if cand.get("stakeholder_hint") == slot and score >= 35:
+            if cand.get("stakeholder_hint") == slot and score >= min_slot_score:
                 used_keys.add(source_key)
                 return cand
         for score, cand, source_key in scored:
-            if score >= 45:
+            if score >= 55:
                 used_keys.add(source_key)
                 return cand
         return None
@@ -699,7 +797,10 @@ class PowerMapBuilder:
             picked = IdentityLayer.pick_for_slot(candidates, slot, used_names, used_keys)
 
             if slot == "ceo" and ceo_name and ceo_name not in ("—",):
-                name = ceo_name if ceo_name not in ("Руководитель",) else "Руководитель (ЕГРЮЛ)"
+                if len(ceo_name) > 45 or "ОБЩЕСТВО" in ceo_name.upper():
+                    name = "Руководитель (ЕГРЮЛ)"
+                else:
+                    name = ceo_name if ceo_name not in ("Руководитель",) else "Руководитель (ЕГРЮЛ)"
                 role = cfg["default_role"]
                 source = "DaData / ЕГРЮЛ + Identity Layer"
                 source_type = "dadata"
@@ -736,27 +837,32 @@ class PowerMapBuilder:
                 role_dork = ProfileDorkResolver.resolve_profile(
                     clean_name, "", role, stakeholder_type=slot
                 )
-                if role_dork.get("is_resolved") or role_dork.get("score", 0) >= 35:
-                    url = role_dork["profile_url"]
+                url = role_dork.get("profile_url") or ""
+                if url and (role_dork.get("is_resolved") or role_dork.get("score", 0) >= 35):
                     conf = role_dork.get("confidence", 40)
+                    company_ok = True
                     if "tenchat.ru" in url:
                         verified = ProfileVerifier.parse_tenchat_profile(url)
+                        company_ok = ProfileVerifier.company_match_score(
+                            verified.get("raw_title", ""), clean_name, inn,
+                        ) >= 15
                         conf = max(conf, ProfileVerifier.compute_confidence(
                             verified, clean_name, inn, slot,
                             cfg["role_keywords"], "",
-                        ))
-                    profiles.update({
-                        "profile_url": url,
-                        "profile_resolved": conf >= 40,
-                        "profile_platform": role_dork.get("platform", "tenchat"),
-                        "profile_confidence": conf,
-                        "profile_badge": ProfileVerifier.badge_for_confidence(conf, conf >= 40),
-                        "search_link_tenchat": url if "tenchat" in url else profiles.get("search_link_tenchat"),
-                        "dork_query": role_dork.get("dork_query", ""),
-                    })
-                    if picked is None:
-                        source = f"Dorking → {profiles.get('profile_platform', 'TenChat')}"
-                        source_type = "dork_verified"
+                        )) if company_ok else 0
+                    if company_ok and conf >= 40:
+                        profiles.update({
+                            "profile_url": url,
+                            "profile_resolved": True,
+                            "profile_platform": role_dork.get("platform", "tenchat"),
+                            "profile_confidence": conf,
+                            "profile_badge": ProfileVerifier.badge_for_confidence(conf, True),
+                            "search_link_tenchat": url if "tenchat" in url else profiles.get("search_link_tenchat"),
+                            "dork_query": role_dork.get("dork_query", ""),
+                        })
+                        if picked is None and name == "Контакт не найден":
+                            source = f"Dorking → {profiles.get('profile_platform', 'TenChat')}"
+                            source_type = "dork_verified"
 
             if slot == "ceo" and not profiles.get("profile_resolved"):
                 profiles["profile_url"] = f"https://bo.nalog.ru/search?query={inn}"
@@ -770,8 +876,36 @@ class PowerMapBuilder:
                     profiles["search_link_tenchat"] = profiles.get("search_link_tenchat") or f"https://tenchat.ru/search?query={urllib.parse.quote(f'{clean_name} {name}')}"
 
             if picked and picked.get("vacancy_url"):
-                profiles["profile_url"] = profiles.get("profile_url") or picked["vacancy_url"]
+                profiles["profile_url"] = picked["vacancy_url"]
                 profiles["search_link_hh"] = picked["vacancy_url"]
+                if name in ("—", "Контакт не найден"):
+                    profiles["profile_badge"] = "Probable"
+                    profiles["profile_platform"] = "hh.ru"
+
+            if (
+                slot != "ceo"
+                and source_type in IdentityLayer.TENCHAT_AUTH_TYPES
+                and not profiles.get("profile_resolved")
+            ):
+                name = "Контакт не найден"
+                source = "Smart Search (профиль не подтверждён)"
+                source_type = "dork_fallback"
+
+            if (
+                slot != "ceo"
+                and name not in ("—", "Контакт не найден", "Руководитель (ЕГРЮЛ)")
+                and profiles.get("profile_confidence", 0) < 40
+                and source_type in IdentityLayer.TENCHAT_AUTH_TYPES | {"identity", "dork_verified"}
+            ):
+                name = "Контакт не найден"
+                profiles["profile_resolved"] = False
+                profiles["profile_badge"] = "Smart Search"
+
+            if name == "Контакт не найден":
+                profiles.setdefault(
+                    "search_link_tenchat",
+                    f"https://tenchat.ru/search?query={urllib.parse.quote(f'{clean_name} {role}')}",
+                )
 
             entry = {
                 "power_type": cfg["power_type"],
