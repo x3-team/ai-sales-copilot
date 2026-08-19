@@ -249,14 +249,15 @@ STATIC_PROSPECT_DATABASE = [
     }
 ]
 
-def generate_dynamic_lprs(inn: str, company_name: str, ceo_from_dadata: str, trigger_info: str = ""):
+def generate_dynamic_lprs(inn: str, company_name: str, ceo_from_dadata: str, trigger_info: str = "", website_url: str = None):
     clean_name = company_name.replace('ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ', '').replace('ООО', '').replace('ПАО', '').replace('АО', '').strip(' "')
     if not clean_name:
         clean_name = "Компания"
 
-    # Вызываем многоуровневый скрейпер для построения полной Карты Власти (CEO, ЛПР, ЛВР, ЛДПР)
     power_map = ProfessionalNetworkScraper.search_and_enrich_power_map_for_company(
-        clean_name, inn, ceo_from_dadata, product_domain=current_seller_profile.product_name
+        clean_name, inn, ceo_from_dadata,
+        product_domain=current_seller_profile.product_name,
+        website_url=website_url,
     )
 
     p_name = current_seller_profile.product_name
@@ -282,33 +283,13 @@ def generate_dynamic_lprs(inn: str, company_name: str, ceo_from_dadata: str, tri
 
     return power_map
 
-def generate_dynamic_hh_vacancies(inn: str, company_name: str):
-    clean_name = company_name.replace('ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ', '').replace('ООО', '').replace('ПАО', '').replace('АО', '').strip(' "')
-    if not clean_name:
-        clean_name = "Компания"
-
-    return [
-        {
-            "id": f"hh-dyn-1",
-            "title": "Менеджер по активным B2B продажам",
-            "salary": "140 000 – 240 000 руб.",
-            "experience": "1-3 года",
-            "requirement": f"Опыт работы в CRM, проведение переговоров и презентаций для {clean_name}.",
-            "hr_name": "Отдел подбора персонала",
-            "hr_email": f"hr@{clean_name.lower().replace(' ', '')}.ru",
-            "hr_phone": "+7 (800) 555-35-35"
-        },
-        {
-            "id": f"hh-dyn-2",
-            "title": "Специалист по автоматизации процессов",
-            "salary": "160 000 – 260 000 руб.",
-            "experience": "3-6 лет",
-            "requirement": "Навыки внедрения софта, оптимизация бизнес-логики и учета.",
-            "hr_name": "HR Департамент",
-            "hr_email": f"career@{clean_name.lower().replace(' ', '')}.ru",
-            "hr_phone": "+7 (800) 555-35-36"
-        }
-    ]
+def generate_dynamic_hh_vacancies(inn: str, company_name: str, product_keyword: str = ""):
+    from identity_layer import HHVacancyParser
+    kw = product_keyword or current_seller_profile.product_name or "1С"
+    vacancies = HHVacancyParser.list_vacancies(company_name, kw, inn=inn, limit=8)
+    if vacancies:
+        return vacancies
+    return []
 
 # --------------------------------------------------------------------------
 # 4. AUTO-PROSPECTING & EXPORT ENGINE
@@ -360,7 +341,7 @@ def auto_prospect_clients(product_keyword: str = Query("1С", description="Кл�
         "search_query": product_keyword,
         "active_seller_product": current_seller_profile.product_name,
         "found_count": len(prospects),
-        "live_signals_source": "Identity Layer: DaData + HH + Habr + TenChat Verify",
+        "live_signals_source": "Identity Layer: DaData + HH + Habr + сайт + TenChat verify (BYOS optional)",
         "prospects": prospects
     }
 
@@ -419,6 +400,69 @@ def export_prospects_csv(product_keyword: str = Query("1С")):
 # --------------------------------------------------------------------------
 # 5. SINGLE COMPANY ENRICHMENT API
 # --------------------------------------------------------------------------
+
+def _extract_website_from_dadata(data: dict) -> str:
+    sites = data.get("sites") or []
+    if sites:
+        first = sites[0]
+        if isinstance(first, str) and first.startswith("http"):
+            return first.rstrip("/")
+        if isinstance(first, dict):
+            url = first.get("value") or first.get("url") or ""
+            if url.startswith("http"):
+                return url.rstrip("/")
+    return ""
+
+
+@app.get("/api/copilot/sources-status")
+def copilot_sources_status():
+    """Статус интеграций: core (без cookies) + optional TenChat BYOS."""
+    from tenchat_auth import TenChatAuthClient
+    tenchat = TenChatAuthClient.session_status()
+    return {
+        "mvp_mode": "full" if tenchat.get("authenticated") else "core_without_tenchat_auth",
+        "core": {
+            "dadata": {
+                "available": bool(DADATA_API_KEY),
+                "label": "DaData / ЕГРЮЛ",
+                "detail": "ИНН, CEO, адрес" if DADATA_API_KEY else "DADATA_API_KEY не задан",
+            },
+            "hh": {
+                "available": True,
+                "label": "HH.ru",
+                "detail": "HTML-парсинг вакансий и ролей",
+            },
+            "habr": {
+                "available": True,
+                "label": "Хабр Карьера",
+                "detail": "Сигналы IT-найма",
+            },
+            "website": {
+                "available": True,
+                "label": "Сайт компании",
+                "detail": "/team, /about, /contacts",
+            },
+            "tenchat_public": {
+                "available": True,
+                "label": "TenChat (публичный)",
+                "detail": "Slug probe + verify без cookies",
+            },
+        },
+        "optional": {
+            "tenchat_auth": {
+                "configured": tenchat.get("configured", False),
+                "authenticated": tenchat.get("authenticated", False),
+                "label": "TenChat BYOS",
+                "message": tenchat.get("message", ""),
+                "setup": (
+                    "Локально: создайте .env с TENCHAT_ACCESS_TOKEN=... "
+                    "(DevTools → Network → Authorization: Bearer ...). "
+                    "Обновляйте ~раз в 2 недели. MVP работает и без этого."
+                ),
+            },
+        },
+    }
+
 
 @app.get("/api/copilot/tenchat-status")
 def tenchat_session_status():
@@ -486,6 +530,7 @@ def enrich_company_profile(inn: str = Query(..., description="ИНН компа�
     management = data.get("management") or {}
     address = data.get("address") or {}
     state = data.get("state") or {}
+    website_url = _extract_website_from_dadata(data)
     
     ceo_name = management.get("name") if isinstance(management, dict) else "Руководитель"
     if not ceo_name:
@@ -501,11 +546,19 @@ def enrich_company_profile(inn: str = Query(..., description="ИНН компа�
         "address": address.get("value") if isinstance(address, dict) else "Не указан",
         "status": state.get("status") if isinstance(state, dict) else "ACTIVE",
         "employee_count": data.get("employee_count"),
-        "revenue": finance.get("revenue") if isinstance(finance, dict) else None
+        "revenue": finance.get("revenue") if isinstance(finance, dict) else None,
+        "website": website_url or None,
     }
     
-    vacancies = generate_dynamic_hh_vacancies(company_info["inn"], company_info["name"])
-    lpr_list = generate_dynamic_lprs(company_info["inn"], company_info["name"], company_info["ceo"], f"Вакансии: {len(vacancies)} на hh.ru")
+    product_kw = current_seller_profile.product_name or "1С"
+    vacancies = generate_dynamic_hh_vacancies(company_info["inn"], company_info["name"], product_kw)
+    lpr_list = generate_dynamic_lprs(
+        company_info["inn"],
+        company_info["name"],
+        company_info["ceo"],
+        f"Вакансии: {len(vacancies)} на hh.ru",
+        website_url=website_url or None,
+    )
     
     score = 75
     pain_points = []
@@ -521,13 +574,21 @@ def enrich_company_profile(inn: str = Query(..., description="ИНН компа�
             
     if len(vacancies) > 0:
         score += 10
-        pain_points.append(f"Найдено {len(vacancies)} вакансий на hh.ru — компания активно расширяется.")
+        pain_points.append(f"Найдено {len(vacancies)} реальных вакансий на hh.ru — компания активно расширяется.")
         
-    pain_points.append(f"Сформирована карта из {len(lpr_list)} ЛПР (CEO, CCO, CTO) с персональными питчами Gemini Flash.")
+    pain_points.append(f"Сформирована карта из {len(lpr_list)} стейкхолдеров (Identity Layer: DaData + HH + сайт + TenChat verify).")
+
+    from tenchat_auth import TenChatAuthClient
+    sources_note = (
+        "TenChat BYOS подключён — расширенный поиск активен."
+        if TenChatAuthClient.is_configured() and TenChatAuthClient.session_status().get("authenticated")
+        else "TenChat не подключён — MVP работает на DaData, HH, сайте и публичном TenChat."
+    )
 
     return {
         "seller_product_profile": current_seller_profile,
         "dadata_legal_profile": company_info,
+        "sources_status_note": sources_note,
         "lpr_matrix": {
             "total_lprs": len(lpr_list),
             "lprs": lpr_list
@@ -684,6 +745,25 @@ def get_demo_ui():
         .nav-pills .nav-link.active {
             background-color: #0d6efd;
         }
+        .sources-banner {
+            border-radius: 12px;
+            border: 1px solid #bfdbfe;
+            background: linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%);
+        }
+        .sources-banner.tenchat-off {
+            border-color: #fde68a;
+            background: linear-gradient(135deg, #fffbeb 0%, #eff6ff 100%);
+        }
+        .source-chip {
+            font-size: 0.72rem;
+            font-weight: 600;
+            padding: 0.25rem 0.55rem;
+            border-radius: 999px;
+            border: 1px solid #e2e8f0;
+            background: #fff;
+        }
+        .source-chip.ok { color: #047857; border-color: #a7f3d0; background: #ecfdf5; }
+        .source-chip.warn { color: #b45309; border-color: #fde68a; background: #fffbeb; }
     </style>
 </head>
 <body>
@@ -714,6 +794,35 @@ def get_demo_ui():
     </nav>
 
     <div class="container mb-5">
+
+        <!-- Статус источников данных (TenChat optional BYOS) -->
+        <div id="sourcesStatusBanner" class="sources-banner tenchat-off p-3 mb-4 shadow-sm d-none">
+            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                <div>
+                    <div class="fw-bold text-dark mb-1">
+                        <i class="bi bi-database-check text-primary me-1"></i>
+                        <span id="sourcesModeTitle">Identity Layer: core-режим</span>
+                    </div>
+                    <p class="text-muted small mb-2" id="sourcesModeDetail">
+                        TenChat не подключён — работаем на DaData, HH, сайте и публичном TenChat verify.
+                    </p>
+                    <div class="d-flex flex-wrap gap-2" id="sourcesChips"></div>
+                </div>
+                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#tenchatByosHelp">
+                    <i class="bi bi-plug me-1"></i> Подключить TenChat (optional)
+                </button>
+            </div>
+            <div class="collapse mt-3" id="tenchatByosHelp">
+                <div class="p-3 bg-white rounded-3 border small text-muted">
+                    <strong class="text-dark">BYOS — Bring Your Own Session.</strong> MVP не требует cookies TenChat.
+                    Для расширенного поиска добавьте в локальный <code>.env</code>:
+                    <pre class="bg-light p-2 rounded mt-2 mb-2 small">TENCHAT_ACCESS_TOKEN=ваш_Bearer_токен
+TENCHAT_REFRESH_TOKEN=ваш_refresh_токен</pre>
+                    DevTools → Network → любой запрос к tenchat.ru → заголовок <code>Authorization: Bearer ...</code>.
+                    Перезапустите <code>uvicorn</code>. Токен живёт ~2 недели.
+                </div>
+            </div>
+        </div>
         
         <!-- Информационная плашка продукта -->
         <div class="seller-badge-bar mb-4 d-flex justify-content-between align-items-center flex-wrap gap-2 shadow-sm">
@@ -912,6 +1021,41 @@ def get_demo_ui():
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         let currentEnrichedData = null;
+
+        async function loadSourcesStatus() {
+            try {
+                const res = await fetch('/api/copilot/sources-status');
+                const data = await res.json();
+                const banner = document.getElementById('sourcesStatusBanner');
+                const chips = document.getElementById('sourcesChips');
+                banner.classList.remove('d-none');
+
+                const tenchat = data.optional?.tenchat_auth || {};
+                const isAuth = tenchat.authenticated;
+                banner.className = `sources-banner p-3 mb-4 shadow-sm ${isAuth ? '' : 'tenchat-off'}`;
+
+                document.getElementById('sourcesModeTitle').innerText = isAuth
+                    ? 'Identity Layer: полный режим (TenChat BYOS активен)'
+                    : 'Identity Layer: core-режим (без TenChat cookies)';
+                document.getElementById('sourcesModeDetail').innerText = isAuth
+                    ? tenchat.message || 'TenChat BYOS подключён — расширенный поиск сотрудников.'
+                    : 'TenChat не подключён — MVP работает на DaData, HH.ru, сайте компании и публичном TenChat verify.';
+
+                chips.innerHTML = '';
+                Object.values(data.core || {}).forEach(src => {
+                    const chip = document.createElement('span');
+                    chip.className = `source-chip ${src.available ? 'ok' : 'warn'}`;
+                    chip.innerHTML = `<i class="bi bi-${src.available ? 'check-circle' : 'exclamation-circle'} me-1"></i>${src.label}`;
+                    chip.title = src.detail || '';
+                    chips.appendChild(chip);
+                });
+                const tcChip = document.createElement('span');
+                tcChip.className = `source-chip ${isAuth ? 'ok' : 'warn'}`;
+                tcChip.innerHTML = `<i class="bi bi-${isAuth ? 'check-circle' : 'info-circle'} me-1"></i>TenChat BYOS ${isAuth ? 'ON' : 'optional'}`;
+                tcChip.title = tenchat.setup || tenchat.message || '';
+                chips.appendChild(tcChip);
+            } catch (e) { console.warn('sources-status', e); }
+        }
 
         async function loadSellerProfile() {
             try {
@@ -1134,6 +1278,10 @@ def get_demo_ui():
                 document.getElementById('companyNameHeader').innerText = data.dadata_legal_profile.name;
                 document.getElementById('scoreCircle').innerText = data.sales_ai_insights.lead_score;
 
+                if (data.sources_status_note) {
+                    showToast(data.sources_status_note);
+                }
+
                 const lprContainer = document.getElementById('lprCardsContainer');
                 lprContainer.innerHTML = '';
                 data.lpr_matrix.lprs.forEach((person, idx) => {
@@ -1215,6 +1363,7 @@ def get_demo_ui():
         }
 
         window.onload = function() {
+            loadSourcesStatus();
             loadSellerProfile();
             runAutoProspecting();
         };
