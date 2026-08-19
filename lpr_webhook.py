@@ -99,11 +99,35 @@ def create_job(
         "company_name": company_name,
         "platforms": plats,
         "instructions_for_provider": {
+            "provider": "soprano",
             "callback_url": callback_url,
-            "expected_callback_body_examples": [
-                {"result_url": "https://provider.example/results/abc.json"},
-                {"url": "https://provider.example/results/abc.json"},
-                {"contacts": [{"name": "Иван Иванов", "role": "CFO", "profile_url": "https://tenchat.ru/..."}]},
+            "callback_method": "POST",
+            "callback_query": {"job_id": job_id},
+            "callback_body_contract": {
+                "status": "completed",
+                "contacts": [
+                    {
+                        "name": "Лайтнер Илья Юрьевич",
+                        "role": "Генеральный директор, 100% учредитель",
+                        "company": "ООО «МАКС»",
+                        "profile_url": "https://tenchat.ru/0852009",
+                        "telegram": "https://t.me/laitnerbro",
+                        "email": "maxsait1541@gmail.com",
+                        "phone": None,
+                        "source": "TenChat · профиль + страница компании",
+                        "confidence": 95,
+                        "stakeholder_hint": "ceo",
+                        "extra_links": [
+                            "https://tenchat.ru/1237700247168",
+                            "https://m-a-x.online",
+                        ],
+                    }
+                ],
+            },
+            "rules": [
+                "Не выдумывать email/phone — только то, что видно в профиле или открытых источниках",
+                "Пустые поля — null или omit",
+                "Можно вернуть result_url вместо inline contacts",
             ],
             "optional_header": "X-Webhook-Secret: <WEBHOOK_SECRET>" if WEBHOOK_SECRET else None,
         },
@@ -274,19 +298,42 @@ def normalize_contacts(payload: Dict[str, Any], provider: str = "lpr_agent") -> 
         if "linkedin" in platform or "linkedin" in profile_url:
             source_type = "identity"
 
+        company = (person.get("company") or person.get("company_name") or "").strip()
+        source_label = (person.get("source") or "").strip()
+        if not source_label:
+            source_label = f"{provider} · {platform or 'webhook'}"
+        if company and company not in source_label:
+            source_label = f"{source_label} · {company}"
+
+        email = person.get("email")
+        phone = person.get("phone")
+        telegram = person.get("telegram")
+        if isinstance(email, str) and not email.strip():
+            email = None
+        if isinstance(phone, str) and not phone.strip():
+            phone = None
+        if isinstance(telegram, str) and not telegram.strip():
+            telegram = None
+
+        extra_links = person.get("extra_links") or person.get("links")
+        if not isinstance(extra_links, list):
+            extra_links = []
+
         out.append({
             "name": name or "—",
             "role": role or "Контакт",
-            "source": f"{provider} · {platform or 'webhook'}",
+            "company": company or None,
+            "source": source_label,
             "source_type": source_type,
             "confidence_base": min(max(conf, 0), 100),
             "profile_url": profile_url,
             "profile_resolved": bool(profile_url),
             "profile_platform": platform or ("tenchat" if "tenchat" in profile_url else "linkedin"),
             "stakeholder_hint": hint,
-            "email": person.get("email"),
-            "phone": person.get("phone"),
-            "telegram": person.get("telegram"),
+            "email": email,
+            "phone": phone,
+            "telegram": telegram,
+            "extra_links": extra_links,
         })
     return out
 
@@ -312,10 +359,10 @@ def _safe_json(resp: requests.Response) -> Any:
 def default_prompt(company_name: str, inn: str, product: str = "1С") -> str:
     return (
         f"Компания: {company_name}, ИНН {inn}. "
-        f"Найди в TenChat и LinkedIn людей, связанных с компанией: "
-        f"финансовый/коммерческий директор (ЛПР), IT/1С lead (ЛВР), HR (ЛДПР). "
+        f"Найди в TenChat людей, связанных с компанией (ЛПР, IT/1С, HR, CEO). "
         f"Продукт продавца: {product}. "
-        f"Верни JSON со списком contacts: name, role, platform, profile_url, email, phone, confidence."
+        f"Только факты из профилей и открытых источников — без выдуманных контактов. "
+        f"Верни JSON: contacts[] с полями name, role, company, profile_url, telegram, email, phone, source, confidence."
     )
 
 
@@ -338,9 +385,10 @@ def candidates_to_lpr_entries(candidates: List[Dict[str, Any]]) -> List[Dict[str
         conf = int(c.get("confidence_base") or c.get("profile_confidence") or 0)
         email = c.get("email") or "—"
         phone = c.get("phone") or "—"
+        telegram = c.get("telegram") or "—"
         out.append({
             "power_type": _POWER_TYPE.get(hint, _POWER_TYPE["lpr"]),
-            "role": c.get("role") or "Контакт",
+            "role": (f"{c.get('role') or 'Контакт'}" + (f" · {c['company']}" if c.get("company") else "")),
             "name": c.get("name") or "—",
             "source": c.get("source") or "LPR Agent · webhook",
             "source_type": c.get("source_type") or "identity",
