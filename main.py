@@ -623,6 +623,12 @@ def startup_memory_schema():
         memory_store.ensure_schema()
     except Exception:
         pass
+    try:
+        import lpr_job_store
+
+        lpr_job_store.init_db()
+    except Exception:
+        pass
 
 
 @app.get("/health")

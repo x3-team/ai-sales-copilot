@@ -292,11 +292,44 @@ def submit_task_to_provider(job: Dict[str, Any] | None = None, job_id: str = "")
 
 def get_job(job_id: str) -> Dict[str, Any]:
     validate_job_id(job_id)
-    job = _jobs.get(job_id) or lpr_job_store.load_job(job_id)
+    job = lpr_job_store.load_job(job_id) or _jobs.get(job_id)
     if not job:
         raise KeyError(f"Job {job_id} not found")
     _jobs[job_id] = job
     return job
+
+
+def _is_honest_empty_inbound(payload: Dict[str, Any]) -> bool:
+    """Provider finished successfully but found no people — not a transport error."""
+    status = (payload.get("status") or "").lower().strip()
+    if status in ("failed", "error"):
+        return False
+    if status in ("completed", "success", "ok", "done", "empty", "not_found", "no_results"):
+        return True
+    for key in ("contacts", "results", "people", "persons", "items", "profiles"):
+        val = payload.get(key)
+        if isinstance(val, list) and len(val) == 0:
+            return True
+    data = payload.get("data")
+    if isinstance(data, dict):
+        return _is_honest_empty_inbound(data)
+    # Explicit success-ish payload without error and without result_url requirement
+    if not payload.get("error") and status != "failed":
+        return True
+    return False
+
+
+def _resolve_inbound_status(
+    payload: Dict[str, Any], candidates: List[Dict[str, Any]]
+) -> Tuple[str, Optional[str]]:
+    if candidates:
+        return "completed", None
+    status = (payload.get("status") or "").lower().strip()
+    if status in ("failed", "error"):
+        return "failed", payload.get("error") or payload.get("message") or "Provider reported failure"
+    if _is_honest_empty_inbound(payload):
+        return "completed", None
+    return "failed", "Пустой результат — ожидали result_url или contacts/results"
 
 
 def get_job_public(job_id: str, *, include_pii: bool = True) -> Dict[str, Any]:
@@ -346,17 +379,13 @@ def handle_inbound_webhook(job_id: str, payload: Dict[str, Any]) -> Dict[str, An
             return get_job_public(job_id)
 
     candidates = normalize_contacts(payload, provider="soprano")
-    if not candidates:
-        status = (payload.get("status") or "").lower()
-        if status in ("failed", "error"):
-            job["status"] = "failed"
-            job["error"] = payload.get("error") or payload.get("message") or "Provider reported failure"
-        else:
-            job["status"] = "failed"
-            job["error"] = "Пустой результат — ожидали result_url или contacts/results"
-    else:
-        job["status"] = "completed"
+    status, err = _resolve_inbound_status(payload, candidates)
+    job["status"] = status
+    job["error"] = err
+    if candidates:
         job["candidates"] = candidates
+    elif status == "completed":
+        job["candidates"] = []
         job["error"] = None
 
     job["updated_at"] = _now()
@@ -574,4 +603,4 @@ def hmac_configured() -> bool:
 
 
 def store_info() -> Dict[str, Any]:
-    return {"backend": "sqlite", "path": lpr_job_store.db_path()}
+    return lpr_job_store.store_info()

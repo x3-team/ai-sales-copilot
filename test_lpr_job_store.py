@@ -83,6 +83,61 @@ class LprJobStoreTests(unittest.TestCase):
         self.assertEqual(job["candidates_count"], 1)
         self.assertEqual(job["candidates"][0]["name"], "Test Director")
 
+    def test_empty_inbound_completed_not_failed(self):
+        created = self.webhook.create_job(
+            prompt="test",
+            inn="771579995573",
+            company_name="ИП Елисеев",
+            auto_submit=False,
+        )
+        job_id = created["job_id"]
+        result = self.webhook.handle_inbound_webhook(
+            job_id,
+            {"status": "completed", "contacts": []},
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["candidates_count"], 0)
+        self.assertIsNone(result.get("error"))
+
+        import lpr_job_store
+        import lpr_webhook
+
+        importlib.reload(lpr_job_store)
+        importlib.reload(lpr_webhook)
+
+        job = lpr_webhook.get_job_public(job_id)
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(job["candidates_count"], 0)
+
+    def test_repeat_inbound_same_job_id(self):
+        created = self.webhook.create_job(
+            prompt="test",
+            inn="4217184336",
+            company_name="ООО «СУПЕР СИЛА»",
+            auto_submit=False,
+        )
+        job_id = created["job_id"]
+        self.webhook.handle_inbound_webhook(
+            job_id,
+            {
+                "status": "completed",
+                "contacts": [
+                    {
+                        "name": "Director",
+                        "role": "CEO",
+                        "source": "TenChat",
+                        "stakeholder_hint": "ceo",
+                    }
+                ],
+            },
+        )
+        second = self.webhook.handle_inbound_webhook(
+            job_id,
+            {"status": "completed", "contacts": []},
+        )
+        self.assertEqual(second["status"], "completed")
+        self.assertEqual(second["job_id"], job_id)
+
 
 if __name__ == "__main__":
     unittest.main()
