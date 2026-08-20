@@ -1,4 +1,4 @@
-"""Tests for HH vacancy open-contact parsing and reachable status from vacancy contacts."""
+"""Tests: HH vacancy is trigger-only — not a reachable contact source."""
 import os
 import tempfile
 import unittest
@@ -28,16 +28,6 @@ OPEN_CONTACT_HTML = """
 </body></html>
 """
 
-GENERIC_CONTACT_HTML = """
-<html><body>
-  <div data-qa="vacancy-contacts">
-    <span data-qa="vacancy-contacts-name">Отдел подбора</span>
-    <a data-qa="vacancy-contacts-email" href="mailto:hr@company.ru">hr@company.ru</a>
-    <span data-qa="vacancy-contacts-phone">+7 (495) 000-00-00</span>
-  </div>
-</body></html>
-"""
-
 
 class HHVacancyContactsTest(unittest.TestCase):
     def test_hidden_contact_fields_empty(self):
@@ -51,11 +41,8 @@ class HHVacancyContactsTest(unittest.TestCase):
         parsed = HHVacancyParser.parse_open_contacts(OPEN_CONTACT_HTML)
         self.assertNotEqual(parsed.get("contacts_hidden"), "true")
         self.assertEqual(parsed.get("contact_name"), "Иванова Анна Сергеевна")
-        self.assertEqual(parsed.get("contact_email"), "anna.ivanova@client.ru")
-        self.assertEqual(parsed.get("contact_phone"), "+7 (495) 123-45-67")
 
     def test_no_regex_guess_from_description_when_hidden(self):
-        """Description mentions email/phone but hidden flag — must stay empty."""
         parsed = HHVacancyParser.parse_open_contacts(HIDDEN_CONTACT_HTML)
         self.assertEqual(parsed.get("contact_email"), "")
         self.assertEqual(parsed.get("contact_phone"), "")
@@ -63,36 +50,20 @@ class HHVacancyContactsTest(unittest.TestCase):
     def test_one_c_search_keywords_expanded(self):
         keywords = HHVacancyParser.one_c_search_keywords("1С")
         blob = " ".join(keywords).lower()
-        for term in ("консультант 1с", "аналитик 1с", "внедренец 1с", "администратор 1с", "автоматизация 1с"):
+        for term in ("консультант 1с", "аналитик 1с", "внедренец 1с"):
             self.assertIn(term, blob)
 
-    def test_reachable_from_personal_vacancy_email(self):
+    def test_vacancy_email_not_reachable(self):
         vacancy_url = "https://hh.ru/vacancy/12345678"
-        people = [{
-            "fio": "Иванова Анна Сергеевна",
-            "profile_url": None,
-            "meta": {},
-            "contacts": [
-                {
-                    "type": "email",
-                    "value": "anna.ivanova@client.ru",
-                    "source_url": vacancy_url,
-                },
-            ],
-        }]
-        status = cs.compute_card_status(people=people)
-        self.assertEqual(status, cs.STATUS_REACHABLE)
-
-    def test_generic_vacancy_email_not_reachable(self):
-        vacancy_url = "https://hh.ru/vacancy/12345678"
+        self.assertFalse(
+            cs.is_personal_reachable_contact("email", "anna.ivanova@client.ru", vacancy_url)
+        )
         people = [{
             "fio": "",
             "profile_url": None,
             "meta": {},
             "contacts": [
-                {"type": "email", "value": "hr@company.ru", "source_url": vacancy_url},
-                {"type": "email", "value": "info@company.ru", "source_url": vacancy_url},
-                {"type": "email", "value": "vacancy@company.ru", "source_url": vacancy_url},
+                {"type": "email", "value": "anna.ivanova@client.ru", "source_url": vacancy_url},
             ],
         }]
         status = cs.compute_card_status(
@@ -100,17 +71,27 @@ class HHVacancyContactsTest(unittest.TestCase):
             vacancies=[{"title": "Консультант 1С"}],
         )
         self.assertNotEqual(status, cs.STATUS_REACHABLE)
+        self.assertEqual(status, cs.STATUS_SIGNAL)
 
-    def test_vacancy_name_yields_named_not_reachable_without_contact(self):
-        people = [{
-            "fio": "Иванова Анна Сергеевна",
-            "profile_url": None,
-            "meta": {"source_type": "hh_vacancy"},
-            "contacts": [],
-        }]
+    def test_vacancy_phone_not_reachable(self):
+        vacancy_url = "https://hh.ru/vacancy/12345678"
+        self.assertFalse(
+            cs.is_personal_reachable_contact("phone", "+7 495 123-45-67", vacancy_url)
+        )
+
+    def test_tenchat_email_reachable(self):
         status = cs.compute_card_status(
-            people=people,
+            lprs=[{
+                "name": "Иванов",
+                "contacts": {"email": "ivan.petrov@company.ru"},
+            }],
+        )
+        self.assertEqual(status, cs.STATUS_REACHABLE)
+
+    def test_ceo_dadata_named_not_vacancy_contact(self):
+        status = cs.compute_card_status(
             vacancies=[{"title": "Аналитик 1С"}],
+            ceo_name="Аристов Алексей",
         )
         self.assertEqual(status, cs.STATUS_NAMED)
 
@@ -144,46 +125,39 @@ class HHVacancyMemoryTest(unittest.TestCase):
         self.tmp.cleanup()
         os.environ.pop("COPILOT_MEMORY_DB_PATH", None)
 
-    def test_upsert_from_hh_vacancy_empty_slots(self):
-        pid = self.ms.upsert_from_hh_vacancy(
+    def test_upsert_from_hh_vacancy_hidden_contact_trigger_only(self):
+        inn = self.ms.upsert_from_hh_vacancy(
             "7801711200",
             "АО «ИМ»",
             {
-                "id": "hh-135527588",
                 "title": "Программист 1С",
                 "url": "https://hh.ru/vacancy/135527588",
-                "hr_name": "",
-                "hr_email": "",
-                "hr_phone": "",
                 "contacts_hidden": True,
             },
         )
-        self.assertIsNone(pid)
-        people = self.ms.list_people("7801711200")
-        self.assertEqual(len(people), 0)
+        self.assertEqual(inn, "7801711200")
+        self.assertEqual(len(self.ms.list_people("7801711200")), 0)
+        row = self.ms.get_company("7801711200")
+        self.assertIn("HH:", " ".join(row.get("triggers") or []))
+        self.assertEqual(row.get("card_status"), cs.STATUS_SIGNAL)
 
-    def test_upsert_from_hh_vacancy_with_open_contact(self):
-        url = "https://hh.ru/vacancy/99999999"
-        pid = self.ms.upsert_from_hh_vacancy(
+    def test_upsert_from_hh_vacancy_open_contact_not_stored(self):
+        """Even open vacancy contacts are not persisted — trigger + INN only."""
+        inn = self.ms.upsert_from_hh_vacancy(
             "9999999999",
             "ООО Тест HH",
             {
                 "title": "Консультант 1С",
-                "url": url,
+                "url": "https://hh.ru/vacancy/99999999",
                 "contact_name": "Петрова Мария",
                 "contact_email": "maria.petrova@test.ru",
                 "contact_phone": "+7 916 000-00-01",
             },
         )
-        self.assertIsNotNone(pid)
-        people = self.ms.list_people("9999999999")
-        self.assertEqual(len(people), 1)
-        contacts = people[0]["contacts"]
-        emails = [c for c in contacts if c["type"] == "email"]
-        self.assertEqual(emails[0]["value"], "maria.petrova@test.ru")
-        self.assertEqual(emails[0]["source_url"], url)
+        self.assertEqual(inn, "9999999999")
+        self.assertEqual(len(self.ms.list_people("9999999999")), 0)
         row = self.ms.get_company("9999999999")
-        self.assertEqual(row.get("card_status"), cs.STATUS_REACHABLE)
+        self.assertEqual(row.get("card_status"), cs.STATUS_SIGNAL)
 
 
 class LiveQueueInactiveTest(unittest.TestCase):

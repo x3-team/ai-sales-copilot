@@ -512,23 +512,6 @@ class HHVacancyParser:
             return found
         vacancy_url = f"https://hh.ru/vacancy/{vacancy_id}"
 
-        contact_email = meta.get("contact_email") or ""
-        contact_phone = meta.get("contact_phone") or ""
-        contact_name = meta.get("contact_name") or ""
-
-        if contact_name:
-            found.append({
-                "name": contact_name.strip(),
-                "role": "HR / Контактное лицо (вакансия)",
-                "source": f"HH.ru вакансия «{title[:50]}»",
-                "source_type": "hh_vacancy",
-                "confidence_base": 60,
-                "vacancy_url": vacancy_url,
-                "contact_email": contact_email,
-                "contact_phone": contact_phone,
-                "stakeholder_hint": "hr",
-            })
-
         role_lower = (title + " " + description).lower()
         if any(k in role_lower for k in cls.LPR_TITLE_KEYWORDS):
             found.append({
@@ -538,8 +521,6 @@ class HHVacancyParser:
                 "source_type": "hh_vacancy_lpr",
                 "confidence_base": 48,
                 "vacancy_url": vacancy_url,
-                "contact_email": contact_email,
-                "contact_phone": contact_phone,
                 "employer": employer,
                 "stakeholder_hint": "lpr",
             })
@@ -551,8 +532,6 @@ class HHVacancyParser:
                 "source_type": "hh_vacancy_it",
                 "confidence_base": 45,
                 "vacancy_url": vacancy_url,
-                "contact_email": contact_email,
-                "contact_phone": contact_phone,
                 "employer": employer,
                 "stakeholder_hint": "lvr",
             })
@@ -564,8 +543,6 @@ class HHVacancyParser:
                 "source_type": "hh_vacancy_hr",
                 "confidence_base": 40,
                 "vacancy_url": vacancy_url,
-                "contact_email": contact_email,
-                "contact_phone": contact_phone,
                 "stakeholder_hint": "hr",
             })
         return found

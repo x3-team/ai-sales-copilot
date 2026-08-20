@@ -500,8 +500,8 @@ def upsert_from_hh_vacancy(
     company_inn: str,
     company_name: str,
     vacancy: Dict[str, Any],
-) -> Optional[int]:
-    """Persist open HH vacancy contact fields; empty slots stay empty."""
+) -> Optional[str]:
+    """Register HH vacancy as demand trigger + company with INN — not LPR contacts."""
     if not company_inn:
         return None
     url = (vacancy.get("url") or "").strip()
@@ -510,23 +510,10 @@ def upsert_from_hh_vacancy(
         if vid:
             url = f"https://hh.ru/vacancy/{vid}"
 
-    contact_name = (
-        vacancy.get("contact_name")
-        or vacancy.get("hr_name")
-        or ""
-    ).strip()
-    contact_email = (
-        vacancy.get("contact_email")
-        or vacancy.get("hr_email")
-        or ""
-    ).strip()
-    contact_phone = (
-        vacancy.get("contact_phone")
-        or vacancy.get("hr_phone")
-        or ""
-    ).strip()
     title = (vacancy.get("title") or "Вакансия").strip()
-    trigger = f"HH: {url}" if url else f"HH: {title}"
+    trigger = f"HH: {title}"
+    if url:
+        trigger = f"HH: {url}"
 
     upsert_company(
         company_inn,
@@ -534,30 +521,8 @@ def upsert_from_hh_vacancy(
         sources=["hh.ru"],
         triggers=[trigger],
     )
-
-    person_id: Optional[int] = None
-    if contact_name or contact_email or contact_phone:
-        person_id = upsert_person(
-            company_inn=company_inn,
-            stakeholder="ldpr",
-            fio=contact_name,
-            role=f"HR / Контактное лицо (вакансия «{title[:60]}»)",
-            profile_url=None,
-            platform="hh",
-            sources=["hh.ru"],
-            meta={
-                "source_type": "hh_vacancy",
-                "vacancy_url": url,
-                "contacts_hidden": bool(vacancy.get("contacts_hidden")),
-            },
-        )
-        if contact_email:
-            upsert_contact(person_id, "email", contact_email, source_url=url or None)
-        if contact_phone:
-            upsert_contact(person_id, "phone", contact_phone, source_url=url or None)
-
     refresh_company_status(company_inn, ceo_name=None)
-    return person_id
+    return company_inn
 
 
 def refresh_company_status(inn: str, *, ceo_name: Optional[str] = None) -> Dict[str, Any]:

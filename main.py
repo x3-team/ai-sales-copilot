@@ -846,8 +846,8 @@ def copilot_hh_scan_1c(
     product_keyword: str = Query("1С", description="Ключевое слово продукта"),
 ):
     """
-    Живой скан HH.ru по широким 1С-ключам.
-    В memory попадают только компании с подтверждённым ИНН; закрытые юрлица пропускаются.
+    Живой скан HH.ru по широким 1С-ключам — триггер спроса и компании с ИНН.
+    Контакты вакансии не сохраняются; касание — только из TenChat/Сетка/LinkedIn/DaData.
     """
     from identity_layer import HHVacancyParser
     from live_companies import is_active_company
@@ -873,10 +873,7 @@ def copilot_hh_scan_1c(
             "name": employer,
             "vacancy_title": vac.get("title"),
             "vacancy_url": vac.get("url"),
-            "contact_name": vac.get("contact_name") or "",
-            "contact_email": vac.get("contact_email") or "",
-            "contact_phone": vac.get("contact_phone") or "",
-            "contacts_hidden": bool(vac.get("contacts_hidden")),
+            "trigger_only": True,
             "card_status": (row or {}).get("card_status"),
             "status_label": company_status.status_label((row or {}).get("card_status") or ""),
         })

@@ -128,13 +128,13 @@ def is_personal_reachable_contact(
     value: Any,
     source_url: Optional[str] = None,
 ) -> bool:
-    """Only direct LPR contacts count — not Checko/SBIS/Rusprofile company phones or office mail."""
+    """Only direct LPR contacts count — not Checko/SBIS/Rusprofile or HH vacancy contacts."""
     if not is_real_contact(value):
         return False
     if contact_type == "email" and is_generic_office_email(str(value)):
         return False
     if is_hh_vacancy_source(source_url):
-        return contact_type in ("phone", "telegram", "email")
+        return False
     if contact_type in ("phone", "telegram", "email") and is_company_directory_source(source_url):
         return False
     if contact_type == "phone" and source_url and "checko.ru" in source_url.lower():

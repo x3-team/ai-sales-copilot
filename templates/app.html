@@ -97,7 +97,7 @@
                         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
                             <div>
                                 <h2 class="text-[16px] font-semibold">Очереди компаний</h2>
-                                <p class="text-[12px] text-ink-dim mt-0.5">Спрос на 1С · только подтверждённый ИНН · открытые контакты HH</p>
+                                <p class="text-[12px] text-ink-dim mt-0.5">HH — триггер спроса на 1С · «Можно касаться» — личный контакт из TenChat, Сетки, LinkedIn</p>
                             </div>
                             <button type="button" id="hhScanBtn" onclick="runHhScan()" class="btn btn-primary !py-2 !px-3.5 !text-[13px] shrink-0">
                                 Скан HH 1С
@@ -265,7 +265,7 @@ async function loadCompanyQueues() {
         const inWork = summary.in_work || [];
         const reachableHtml = reachable.length
             ? reachable.map(row).join('')
-            : '<span class="text-ink-mute mono text-[11px]">Пока нет — запустите «Скан HH 1С»</span>';
+            : '<span class="text-ink-mute mono text-[11px]">Пока нет — найдите ЛПР через enrich</span>';
         const inWorkHtml = inWork.length
             ? inWork.map(row).join('')
             : '<span class="text-ink-mute mono text-[11px]">Загрузка seed…</span>';
@@ -292,12 +292,12 @@ async function runHhScan() {
     btn.disabled = true;
     btn.textContent = 'Сканируем HH…';
     status.classList.remove('hidden');
-    status.textContent = 'HH.ru: поиск вакансий 1С (консультант, аналитик, ЗУП, ERP…) — 30–90 сек';
+    status.textContent = 'HH.ru: поиск компаний с вакансиями 1С (консультант, аналитик, ЗУП, ERP…) — 30–90 сек';
     try {
         const res = await fetchWithTimeout('/api/copilot/hh-scan?limit=5', 120000);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.detail || 'Скан не удался');
-        status.textContent = `HH: найдено ${data.found_vacancies}, в memory ${data.ingested_count} компаний с ИНН`;
+        status.textContent = `HH: найдено ${data.found_vacancies}, добавлено ${data.ingested_count} компаний с ИНН (триггер)`;
         await loadCompanyQueues();
         toast(`HH scan: +${data.ingested_count} компаний`);
     } catch (err) {
@@ -541,22 +541,12 @@ function renderSignals(data) {
     const vac = data.hh_recruitment_profile || { vacancies: [] };
     const insights = (data.sales_ai_insights || {}).insights || [];
     const score = (data.sales_ai_insights || {}).lead_score || 0;
-    const vacHtml = (vac.vacancies || []).slice(0, 4).map(v => {
-        const contactBits = [
-            v.hr_name || v.contact_name,
-            v.hr_email || v.contact_email,
-            v.hr_phone || v.contact_phone,
-        ].filter(x => x && x.trim());
-        const contactLine = contactBits.length
-            ? `<div class="mono text-[10px] text-mint mt-2 truncate">${contactBits.join(' · ')}</div>`
-            : (v.contacts_hidden ? '<div class="mono text-[10px] text-ink-mute mt-2">контакт скрыт</div>' : '');
-        return `
+    const vacHtml = (vac.vacancies || []).slice(0, 4).map(v => `
         <a href="${v.url || '#'}" target="_blank" rel="noopener" class="card card-hover p-3.5 block">
             <div class="text-[13px] font-medium leading-snug mb-1">${v.title || 'Вакансия'}</div>
             <div class="mono text-[11px] text-ink-mute">${v.salary || 'з/п не указана'}</div>
-            ${contactLine}
-        </a>`;
-    }).join('');
+            <div class="mono text-[10px] text-ink-mute mt-2">триггер спроса · HH.ru</div>
+        </a>`).join('');
 
     add(`
     <section class="fade-up">
