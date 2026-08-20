@@ -652,6 +652,12 @@ def startup_memory_schema():
             apply_live_seed(memory_store)
     except Exception:
         pass
+    try:
+        from scripts.seed_habr_buyers import apply_habr_buyers_seed
+
+        apply_habr_buyers_seed(memory_store)
+    except Exception:
+        pass
 
 
 @app.get("/health")

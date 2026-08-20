@@ -525,6 +525,63 @@ def upsert_from_hh_vacancy(
     return company_inn
 
 
+def upsert_from_habr_vacancy(
+    company_inn: str,
+    company_name: str,
+    vacancy_url: str,
+    *,
+    note: Optional[str] = None,
+) -> Optional[str]:
+    """Register Habr Career vacancy as demand trigger — not LPR contacts."""
+    if not company_inn:
+        return None
+    url = (vacancy_url or "").strip()
+    trigger = f"Habr: {url}" if url else "Habr: вакансия 1С"
+
+    upsert_company(
+        company_inn,
+        name=company_name or "",
+        sources=["habr", "habr_career"],
+        triggers=[trigger],
+    )
+    if note:
+        patch_company_seed_note(company_inn, note)
+
+    people = list_people(company_inn)
+    has_director = any(_is_real_name(p.get("fio")) for p in people)
+    refresh_company_status(
+        company_inn,
+        ceo_name=next((p.get("fio") for p in people if _is_real_name(p.get("fio"))), None),
+    )
+    if not has_director:
+        upsert_company(company_inn, name=company_name or "", card_status=company_status.STATUS_SIGNAL)
+    return company_inn
+
+
+def patch_company_seed_note(inn: str, note: str) -> None:
+    """Attach idempotent seed note to enrich_payload without touching contacts."""
+    row = get_company(inn)
+    if not row:
+        return
+    payload = row.get("enrich_payload")
+    if not isinstance(payload, dict):
+        payload = {}
+    payload = dict(payload)
+    payload["seed_note"] = note.strip()
+    with _connection() as conn:
+        if db_backend() == "postgres":
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE companies SET enrich_payload = %s::jsonb, updated_at = NOW() WHERE inn = %s",
+                (_json_dump(payload), inn),
+            )
+        else:
+            conn.execute(
+                "UPDATE companies SET enrich_payload = ?, updated_at = ? WHERE inn = ?",
+                (_json_dump(payload), _now_ts(), inn),
+            )
+
+
 def refresh_company_status(inn: str, *, ceo_name: Optional[str] = None) -> Dict[str, Any]:
     row = get_company(inn) or {}
     people = list_people(inn)
