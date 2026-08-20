@@ -9,6 +9,8 @@ import time
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, Optional
 
+from storage_paths import resolve_sqlite_path
+
 _DEFAULT_DIR = os.path.join(os.path.dirname(__file__), "data")
 _RENDER_DISK_DIR = "/var/data"
 _LOCK = threading.Lock()
@@ -20,13 +22,7 @@ def db_backend() -> str:
 
 
 def _resolve_sqlite_path() -> str:
-    explicit = os.environ.get("LPR_JOBS_DB_PATH", "").strip()
-    if explicit:
-        return explicit
-    if os.path.isdir(_RENDER_DISK_DIR) and os.access(_RENDER_DISK_DIR, os.W_OK):
-        return os.path.join(_RENDER_DISK_DIR, "lpr_jobs.db")
-    os.makedirs(_DEFAULT_DIR, exist_ok=True)
-    return os.path.join(_DEFAULT_DIR, "lpr_jobs.db")
+    return resolve_sqlite_path("LPR_JOBS_DB_PATH", "lpr_jobs.db")
 
 
 DB_PATH = _resolve_sqlite_path()
@@ -291,5 +287,3 @@ def purge_expired(cutoff_ts: float) -> int:
             )
             return cur.rowcount
 
-
-init_db()

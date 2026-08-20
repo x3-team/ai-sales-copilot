@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import company_status
+from storage_paths import resolve_sqlite_path
 
 SLOT_ORDER = ("ceo", "lpr", "lvr", "ldpr")
 SLOT_ALIASES = {"hr": "ldpr", "ldpr": "ldpr"}
@@ -63,13 +64,7 @@ def db_backend() -> str:
 
 
 def sqlite_path() -> str:
-    explicit = os.environ.get("COPILOT_MEMORY_DB_PATH", "").strip()
-    if explicit:
-        return explicit
-    if os.path.isdir(_RENDER_DISK_DIR):
-        return os.path.join(_RENDER_DISK_DIR, "copilot_memory.db")
-    os.makedirs(_DEFAULT_DIR, exist_ok=True)
-    return os.path.join(_DEFAULT_DIR, "copilot_memory.db")
+    return resolve_sqlite_path("COPILOT_MEMORY_DB_PATH", "copilot_memory.db")
 
 
 def is_configured() -> bool:
