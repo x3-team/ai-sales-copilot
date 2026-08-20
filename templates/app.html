@@ -297,9 +297,22 @@ async function runHhScan() {
         const res = await fetchWithTimeout('/api/copilot/hh-scan?limit=5', 120000);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.detail || 'Скан не удался');
-        status.textContent = `HH: найдено ${data.found_vacancies}, добавлено ${data.ingested_count} компаний с ИНН (триггер)`;
+        const scanStatus = data.scan_status || 'unknown';
+        const scanMsg = data.scan_message || '';
+        const statusByScan = {
+            ok: scanMsg || `Добавлено ${data.ingested_count} компаний с ИНН (триггер HH)`,
+            hh_unreachable: scanMsg || 'Скан не видит HH — API недоступен с этого сервера',
+            hh_empty: scanMsg || 'HH API доступен, вакансий 1С по запросу не найдено',
+            dadata_missing: scanMsg || 'DaData не настроен — нельзя подтвердить ИНН компаний',
+            no_inn_matches: scanMsg || `HH вернул вакансии (${data.raw_vacancy_count || 0}), но ИНН не подтверждён`,
+        };
+        status.textContent = statusByScan[scanStatus] || scanMsg || `Статус: ${scanStatus}`;
+        status.classList.toggle('text-amber-600', scanStatus !== 'ok');
+        status.classList.toggle('text-ink-dim', scanStatus === 'ok');
         await loadCompanyQueues();
-        toast(`HH scan: +${data.ingested_count} компаний`);
+        if (scanStatus === 'ok' && data.ingested_count > 0) {
+            toast(`HH scan: +${data.ingested_count} компаний`);
+        }
     } catch (err) {
         status.textContent = err.name === 'AbortError'
             ? 'Таймаут скана HH — попробуйте снова'

@@ -479,6 +479,7 @@ def copilot_sources_status():
     from hh_auth import HHAuthClient
     tenchat = TenChatAuthClient.session_status()
     hh = HHAuthClient.session_status()
+    hh_vac = HHAuthClient.probe_vacancies_api()
     optional_full = tenchat.get("authenticated") or hh.get("resume_access")
     return {
         "mvp_mode": "full" if optional_full else "core_without_byos",
@@ -489,9 +490,9 @@ def copilot_sources_status():
                 "detail": "ИНН, CEO, адрес" if DADATA_API_KEY else "DADATA_API_KEY не задан",
             },
             "hh": {
-                "available": True,
-                "label": "HH.ru",
-                "detail": "HTML-парсинг вакансий и ролей",
+                "available": bool(hh_vac.get("available")),
+                "label": "HH.ru API",
+                "detail": hh_vac.get("message") or "Публичный API вакансий",
             },
             "habr": {
                 "available": True,
@@ -846,20 +847,21 @@ def copilot_hh_scan_1c(
     product_keyword: str = Query("1С", description="Ключевое слово продукта"),
 ):
     """
-    Живой скан HH.ru по широким 1С-ключам — триггер спроса и компании с ИНН.
+    Живой скан HH.ru через API — триггер спроса и компании с ИНН (DaData).
     Контакты вакансии не сохраняются; касание — только из TenChat/Сетка/LinkedIn/DaData.
     """
-    from identity_layer import HHVacancyParser
+    from hh_auth import HHAuthClient
     from live_companies import is_active_company
 
-    raw = HHVacancyParser.scan_keyword_vacancies(
-        product_keyword, limit=limit, require_inn=True,
+    scan = HHAuthClient.scan_one_c_vacancy_triggers(
+        limit=limit,
+        product_keyword=product_keyword,
     )
     ingested: List[Dict[str, Any]] = []
     skipped: List[Dict[str, str]] = []
-    for vac in raw:
+    for vac in scan.get("items") or []:
         inn = (vac.get("inn") or "").strip()
-        employer = (vac.get("employer") or "").strip()
+        employer = (vac.get("employer") or vac.get("employer_matched") or "").strip()
         if not inn:
             skipped.append({"employer": employer, "reason": "no_inn"})
             continue
@@ -879,7 +881,10 @@ def copilot_hh_scan_1c(
         })
     return {
         "product_keyword": product_keyword,
-        "found_vacancies": len(raw),
+        "scan_status": scan.get("scan_status"),
+        "scan_message": scan.get("scan_message"),
+        "raw_vacancy_count": scan.get("raw_vacancy_count", 0),
+        "found_vacancies": len(scan.get("items") or []),
         "ingested_count": len(ingested),
         "skipped_count": len(skipped),
         "companies": ingested,
