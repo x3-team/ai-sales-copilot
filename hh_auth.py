@@ -10,7 +10,7 @@ Env:
 """
 import os
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -114,6 +114,224 @@ class HHAuthClient:
                 "resume_access": False,
                 "message": f"Ошибка проверки HH: {exc}",
             }
+
+    @classmethod
+    def _vacancy_api_headers(cls) -> Dict[str, str]:
+        """Public HH API headers — User-Agent required; Bearer optional."""
+        ua = os.environ.get("HH_USER_AGENT", "").strip() or cls.DEFAULT_USER_AGENT
+        headers = {"User-Agent": ua, "Accept": "application/json"}
+        token = os.environ.get("HH_ACCESS_TOKEN", "").strip().removeprefix("Bearer ").strip()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
+
+    @classmethod
+    def probe_vacancies_api(cls) -> Dict[str, Any]:
+        """Check if api.hh.ru/vacancies is reachable from this host."""
+        try:
+            resp = requests.get(
+                f"{cls.BASE_URL}/vacancies",
+                headers=cls._vacancy_api_headers(),
+                params={"text": "1с", "per_page": 1, "page": 0},
+                timeout=12,
+            )
+            if resp.status_code == 200:
+                found = int(resp.json().get("found") or 0)
+                return {
+                    "available": True,
+                    "http_status": 200,
+                    "found_sample": found,
+                    "message": "HH Vacancies API доступен",
+                }
+            if resp.status_code in (403, 429):
+                return {
+                    "available": False,
+                    "http_status": resp.status_code,
+                    "message": (
+                        f"HH API недоступен с этой машины (HTTP {resp.status_code}). "
+                        "Скан вакансий с текущего IP может быть заблокирован."
+                    ),
+                }
+            return {
+                "available": False,
+                "http_status": resp.status_code,
+                "message": f"HH Vacancies API вернул HTTP {resp.status_code}",
+            }
+        except requests.RequestException as exc:
+            return {
+                "available": False,
+                "http_status": 0,
+                "message": f"HH API: ошибка сети ({exc.__class__.__name__})",
+            }
+
+    @classmethod
+    def search_vacancies_api(
+        cls,
+        text: str,
+        *,
+        per_page: int = 20,
+        page: int = 0,
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """GET /vacancies — JSON only, no HTML."""
+        try:
+            resp = requests.get(
+                f"{cls.BASE_URL}/vacancies",
+                headers=cls._vacancy_api_headers(),
+                params={
+                    "text": text,
+                    "per_page": per_page,
+                    "page": page,
+                    "order_by": "publication_time",
+                },
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                return [], f"http_{resp.status_code}"
+            return list(resp.json().get("items") or []), None
+        except requests.RequestException as exc:
+            return [], exc.__class__.__name__
+
+    @classmethod
+    def scan_one_c_vacancy_triggers(
+        cls,
+        *,
+        limit: int = 5,
+        product_keyword: str = "1С",
+    ) -> Dict[str, Any]:
+        """
+        Find 1C vacancy triggers via HH API + confirm INN via DaData.
+        Vacancy contacts are ignored — trigger + company only.
+        """
+        from dadata_company import is_configured as dadata_ok, resolve_party_inn
+        from identity_layer import HHVacancyParser
+        from live_companies import is_active_company
+
+        probe = cls.probe_vacancies_api()
+        if not probe.get("available"):
+            return {
+                "scan_status": "hh_unreachable",
+                "scan_message": probe.get("message") or "HH API недоступен",
+                "items": [],
+                "raw_vacancy_count": 0,
+                "http_status": probe.get("http_status"),
+            }
+
+        if not dadata_ok():
+            return {
+                "scan_status": "dadata_missing",
+                "scan_message": "DaData не настроен — нельзя подтвердить ИНН компаний из HH",
+                "items": [],
+                "raw_vacancy_count": 0,
+            }
+
+        keywords = HHVacancyParser.one_c_search_keywords(product_keyword)
+        raw_vacancy_count = 0
+        api_errors: List[str] = []
+        seen_employers: set = set()
+        out: List[Dict[str, Any]] = []
+
+        for kw in keywords:
+            if len(out) >= limit:
+                break
+            items, err = cls.search_vacancies_api(kw, per_page=30)
+            if err:
+                api_errors.append(f"{kw}:{err}")
+                continue
+            raw_vacancy_count += len(items)
+            for item in items:
+                if item.get("archived"):
+                    continue
+                title = (item.get("name") or "").strip()
+                snippet = item.get("snippet") or {}
+                blob = f"{title} {snippet.get('requirement', '')} {snippet.get('responsibility', '')}".lower()
+                if not HHVacancyParser.matches_one_c_focus(blob):
+                    continue
+                employer = item.get("employer") or {}
+                employer_name = (employer.get("name") or "").strip()
+                employer_id = str(employer.get("id") or "")
+                dedupe_key = employer_id or employer_name.lower()
+                if not employer_name or dedupe_key in seen_employers:
+                    continue
+
+                resolved = resolve_party_inn(employer_name)
+                inn = (resolved.get("inn") or "").strip()
+                if not inn:
+                    continue
+                if not is_active_company(inn):
+                    continue
+                state = resolved.get("reason")
+                if state == "no_match" or not resolved.get("active"):
+                    continue
+
+                seen_employers.add(dedupe_key)
+                vid = str(item.get("id") or "")
+                vacancy_url = item.get("alternate_url") or (
+                    f"https://hh.ru/vacancy/{vid}" if vid else ""
+                )
+                salary = item.get("salary") or {}
+                sal_text = ""
+                if salary:
+                    frm = salary.get("from")
+                    to = salary.get("to")
+                    cur = salary.get("currency") or "RUR"
+                    if frm and to:
+                        sal_text = f"{frm}–{to} {cur}"
+                    elif frm:
+                        sal_text = f"от {frm} {cur}"
+                    elif to:
+                        sal_text = f"до {to} {cur}"
+
+                out.append({
+                    "employer": employer_name,
+                    "employer_matched": resolved.get("matched_name") or employer_name,
+                    "inn": inn,
+                    "title": title,
+                    "salary": sal_text,
+                    "url": vacancy_url,
+                    "vacancy_id": vid,
+                    "demand_reason": f"HH API: «{title}»",
+                    "trigger_only": True,
+                })
+                if len(out) >= limit:
+                    break
+
+        if raw_vacancy_count == 0 and api_errors and not out:
+            return {
+                "scan_status": "hh_unreachable",
+                "scan_message": (
+                    "HH API не вернул вакансии "
+                    f"({', '.join(api_errors[:3])})"
+                ),
+                "items": [],
+                "raw_vacancy_count": 0,
+                "api_errors": api_errors[:5],
+            }
+
+        if raw_vacancy_count == 0:
+            return {
+                "scan_status": "hh_empty",
+                "scan_message": "HH API доступен, но вакансий 1С по запросу не найдено",
+                "items": [],
+                "raw_vacancy_count": 0,
+            }
+
+        if not out:
+            return {
+                "scan_status": "no_inn_matches",
+                "scan_message": (
+                    f"HH вернул {raw_vacancy_count} вакансий, "
+                    "но ни одной компании с подтверждённым активным ИНН"
+                ),
+                "items": [],
+                "raw_vacancy_count": raw_vacancy_count,
+            }
+
+        return {
+            "scan_status": "ok",
+            "scan_message": f"Найдено {len(out)} компаний с ИНН (триггер HH)",
+            "items": out,
+            "raw_vacancy_count": raw_vacancy_count,
+        }
 
     @classmethod
     def search_resumes(
