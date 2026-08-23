@@ -2,7 +2,7 @@
 Webhook-интеграция с внешним LPR-сервисом (Soprano / Grok Bot).
 
 Безопасность inbound:
-  - только HTTPS (Render edge + проверка X-Forwarded-Proto)
+  - HTTPS по умолчанию; localhost HTTP разрешён для локальной разработки
   - job_id = UUID v4 в path (не в query)
   - HMAC-SHA256 подпись тела: X-Webhook-Timestamp + X-Webhook-Signature
   - replay window ±5 мин
@@ -68,17 +68,17 @@ def _purge_expired() -> None:
 def _assert_https_base_url(url: str) -> None:
     if url.startswith("https://"):
         return
-    if WEBHOOK_ALLOW_HTTP and url.startswith("http://127.0.0.1"):
+    if url.startswith("http://127.0.0.1") or url.startswith("http://localhost"):
         return
-    if WEBHOOK_ALLOW_HTTP and url.startswith("http://localhost"):
+    if WEBHOOK_ALLOW_HTTP and url.startswith("http://"):
         return
-    raise ValueError("WEBHOOK_BASE_URL должен быть https:// (Render public URL)")
+    raise ValueError("WEBHOOK_BASE_URL должен быть https:// или http://127.0.0.1 / localhost")
 
 
 def build_callback_url(job_id: str) -> str:
     if not WEBHOOK_BASE_URL:
         raise ValueError(
-            "WEBHOOK_BASE_URL не задан — укажите публичный HTTPS URL сервиса на Render"
+            "WEBHOOK_BASE_URL не задан — укажите http://127.0.0.1:8000 в локальном .env"
         )
     _assert_https_base_url(WEBHOOK_BASE_URL)
     return f"{WEBHOOK_BASE_URL}/api/webhooks/lpr/inbound/{job_id}"

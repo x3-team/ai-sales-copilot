@@ -1,8 +1,8 @@
 """
 Persistent memory for companies, people, contacts, and power maps.
 
-Primary backend: PostgreSQL via DATABASE_URL (Render internal URL in production).
-Fallback: SQLite at COPILOT_MEMORY_DB_PATH or data/copilot_memory.db for local tests.
+Primary backend: SQLite at COPILOT_MEMORY_DB_PATH or data/copilot_memory.db.
+Optional: PostgreSQL via DATABASE_URL.
 """
 from __future__ import annotations
 

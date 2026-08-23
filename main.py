@@ -548,7 +548,7 @@ def copilot_sources_status():
                 "message": (
                     "POST /api/copilot/lpr-jobs → webhook_url + HMAC auth для Soprano"
                     if lpr_webhook.is_configured() and lpr_webhook.hmac_configured()
-                    else "Задайте WEBHOOK_BASE_URL (https) и WEBHOOK_HMAC_SECRET на Render"
+                    else "Задайте WEBHOOK_BASE_URL и WEBHOOK_HMAC_SECRET в локальном .env"
                 ),
             },
             "memory": {
@@ -558,7 +558,7 @@ def copilot_sources_status():
                 "message": (
                     "DATABASE_URL задан — компании/люди/контакты сохраняются между рестартами"
                     if memory_store.db_backend() == "postgres"
-                    else "Локальный SQLite fallback — задайте DATABASE_URL на Render для Postgres"
+                    else "Локальный SQLite в data/ — переживает рестарт на этой машине"
                 ),
             },
         },
@@ -670,6 +670,7 @@ def startup_memory_schema():
 def health_check():
     return {
         "status": "ok",
+        "host": "local",
         "memory": memory_store.store_info(),
     }
 
@@ -684,12 +685,12 @@ def create_lpr_job(body: LprJobCreateRequest):
     if not lpr_webhook.is_configured():
         raise HTTPException(
             status_code=503,
-            detail="WEBHOOK_BASE_URL не задан — укажите публичный HTTPS URL сервиса на Render",
+            detail="WEBHOOK_BASE_URL не задан — укажите http://127.0.0.1:8000 в локальном .env",
         )
     if not lpr_webhook.hmac_configured():
         raise HTTPException(
             status_code=503,
-            detail="WEBHOOK_HMAC_SECRET не задан — сгенерируйте секрет в Render env",
+            detail="WEBHOOK_HMAC_SECRET не задан — задайте секрет в локальном .env",
         )
     prompt = body.prompt or lpr_webhook.default_prompt(
         body.company_name or "Компания",

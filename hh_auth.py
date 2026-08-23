@@ -148,8 +148,8 @@ class HHAuthClient:
                     "available": False,
                     "http_status": resp.status_code,
                     "message": (
-                        f"HH API недоступен с этого сервера (HTTP {resp.status_code}). "
-                        "Скан вакансий с Render может быть заблокирован."
+                        f"HH API недоступен с этой машины (HTTP {resp.status_code}). "
+                        "Скан вакансий с текущего IP может быть заблокирован."
                     ),
                 }
             return {

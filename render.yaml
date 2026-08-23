@@ -1,5 +1,4 @@
-# Blueprint: AI Sales Copilot (FastAPI)
-# Live MVP: SQLite memory (ephemeral on free tier) — no extra Postgres/disk required.
+# Unused. Hosting is local-only (see README and scripts/run_local.sh).
 services:
   - type: web
     name: ai-sales-copilot
