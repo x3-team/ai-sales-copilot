@@ -96,11 +96,11 @@
                     <div class="card p-4 sm:p-5">
                         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
                             <div>
-                                <h2 class="text-[16px] font-semibold">Очереди компаний</h2>
-                                <p class="text-[12px] text-ink-dim mt-0.5">HH — триггер спроса на 1С · «Можно касаться» — личный контакт из TenChat, Сетки, LinkedIn</p>
+                                <h2 class="text-[16px] font-semibold">Лист спроса</h2>
+                                <p class="text-[12px] text-ink-dim mt-0.5">Найм (Habr/HH) и закупки ЕИС под ваш оффер. Письмо отправляете сами.</p>
                             </div>
                             <button type="button" id="hhScanBtn" onclick="runHhScan()" class="btn btn-primary !py-2 !px-3.5 !text-[13px] shrink-0">
-                                Скан HH 1С
+                                Найти спрос
                             </button>
                         </div>
                         <div class="grid sm:grid-cols-2 gap-4">
@@ -141,10 +141,10 @@
                         <div class="w-11 h-11 rounded-xl bg-elevated border border-edge mx-auto mb-4 flex items-center justify-center">
                             <span class="w-2 h-2 rounded-full bg-mint"></span>
                         </div>
-                        <h2 class="text-[18px] font-semibold mb-2">Введите ИНН или сайт компании</h2>
+                        <h2 class="text-[18px] font-semibold mb-2">Откройте компанию из листа</h2>
                         <p class="text-[13px] leading-relaxed text-ink-dim mb-5">
-                            Агент соберёт карту власти: CEO, бизнес-заказчик, IT-эксперт и инициатор закупки.
-                            Или выберите компанию из очереди «В работе» слева / выше.
+                            Карточка: повод (вакансия или закупка), ИНН, с кого начать, черновик письма.
+                            Контакты не собираем — отправляете сами.
                         </p>
                         <div id="emptyQueueHints" class="flex flex-wrap gap-2 justify-center mb-3"></div>
                     </div>
@@ -198,12 +198,11 @@
 
 <script>
 const STEPS = [
-    { id: 'profile',   label: 'Профиль компании' },
-    { id: 'targets',   label: 'Реквизиты' },
-    { id: 'signals',   label: 'Сигналы спроса' },
-    { id: 'powermap',  label: 'Карта власти' },
-    { id: 'verify',    label: 'Верификация' },
-    { id: 'pitches',   label: 'Питчи' }
+    { id: 'offer',   label: 'Оффер' },
+    { id: 'company', label: 'Компания' },
+    { id: 'reason',  label: 'Повод' },
+    { id: 'start',   label: 'С кого начать' },
+    { id: 'pitch',   label: 'Черновик' }
 ];
 
 let currentStep = -1;
@@ -249,14 +248,14 @@ async function loadCompanyQueues() {
     const emptyHints = document.getElementById('emptyQueueHints');
 
     const row = (c) => `
-        <button type="button" onclick="setQuery('${c.inn}')"
+        <button type="button" onclick="openDemandCard('${c.inn}')"
                 class="w-full text-left py-1 hover:text-mint transition">
             <span class="block truncate">${c.name || 'Компания'}</span>
-            <span class="mono text-[10px] text-ink-mute">${c.status_label || ''} · ${c.inn}</span>
+            <span class="mono text-[10px] text-ink-mute">${c.demand_pack_label || c.status_label || ''} · ${c.inn}</span>
         </button>`;
     const chip = (c) => `
-        <button type="button" onclick="setQuery('${c.inn}')"
-                class="chip hover:border-edge-strong transition">${c.inn} · ${(c.name || '').slice(0, 22)}</button>`;
+        <button type="button" onclick="openDemandCard('${c.inn}')"
+                class="chip hover:border-edge-strong transition">${c.demand_pack_label || ''} · ${(c.name || '').slice(0, 22)}</button>`;
 
     try {
         const summary = await fetch('/api/copilot/queue-summary').then(r => r.ok ? r.json() : null);
@@ -265,7 +264,7 @@ async function loadCompanyQueues() {
         const inWork = summary.in_work || [];
         const reachableHtml = reachable.length
             ? reachable.map(row).join('')
-            : '<span class="text-ink-mute mono text-[11px]">Пока нет — найдите ЛПР через enrich</span>';
+            : '<span class="text-ink-mute mono text-[11px]">Пусто — это нормально: личный канал не собран</span>';
         const inWorkHtml = inWork.length
             ? inWork.map(row).join('')
             : '<span class="text-ink-mute mono text-[11px]">Загрузка seed…</span>';
@@ -433,6 +432,11 @@ function resetRun() {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+async function openDemandCard(inn) {
+    document.getElementById('query').value = inn;
+    await runAgent();
+}
+
 async function runAgent(e) {
     if (e) e.preventDefault();
     const q = document.getElementById('query').value.trim();
@@ -444,93 +448,125 @@ async function runAgent(e) {
 
     try {
         currentStep = 0; renderStepper();
-        setAgentStatus(`агент выполняет шаг 1 из ${STEPS.length}`, true);
-        logLine('читаем ваш оффер…', 'run');
-        await sleep(320);
-        document.getElementById('agentLog').lastChild.remove();
-        document.getElementById('agentLogMobile').lastChild.remove();
-        logLine('оффер загружен', 'done');
+        setAgentStatus('открываем карточку спроса', true);
+        logLine('берём компанию из листа…', 'run');
 
-        currentStep = 1; renderStepper();
-        setAgentStatus(`агент выполняет шаг 2 из ${STEPS.length}`, true);
-        const pendingDesk = logLine(`сбор данных: ${q} — обычно 60–90 сек`, 'run');
-        let elapsed = 0;
-        loadTimer = setInterval(() => {
-            elapsed += 5;
-            const t = `сбор данных: ${q} — ${elapsed} сек…`;
-            pendingDesk.lastChild.textContent = t;
-            const mob = document.getElementById('agentLogMobile').lastChild;
-            if (mob) mob.lastChild.textContent = t;
-        }, 5000);
-
-        const res = await fetchWithTimeout(`/api/copilot/enrich-company?query=${encodeURIComponent(q)}`);
-        clearInterval(loadTimer);
-        loadTimer = null;
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.detail || 'Компания не найдена');
+        const digits = q.replace(/\D/g, '');
+        let card = null;
+        if (digits.length === 10 || digits.length === 12) {
+            const res = await fetchWithTimeout(`/api/copilot/company-card?inn=${encodeURIComponent(digits)}`, 20000);
+            if (res.ok) card = await res.json();
         }
-        enriched = await res.json();
-        pendingDesk.remove();
-        document.getElementById('agentLogMobile').lastChild?.remove();
 
-        const legal = enriched.dadata_legal_profile;
-        const companyLabel = `${legal.name} · ИНН ${legal.inn}`;
-        document.getElementById('workspaceCompany').textContent = companyLabel;
-        setWorkspaceBar(`агент выполняет шаг 2 из ${STEPS.length}`, true, companyLabel);
+        if (!card) {
+            logLine('в листе нет — пробуем ЕГРЮЛ…', 'run');
+            const res = await fetchWithTimeout(`/api/copilot/enrich-company?query=${encodeURIComponent(q)}`);
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || 'Компания не найдена');
+            }
+            enriched = await res.json();
+            if (enriched.demand_card) {
+                card = enriched.demand_card;
+            } else {
+                renderLegacyEnrich(enriched);
+                return;
+            }
+        }
 
-        logLine(`ЕГРЮЛ: ${legal.name}`, 'done');
-        renderCompanyCard(legal, enriched.company_card);
-
-        currentStep = 2; renderStepper();
-        setAgentStatus(`агент выполняет шаг 3 из ${STEPS.length}`, true);
-        const vac = enriched.hh_recruitment_profile || { vacancies: [], open_vacancies_count: 0 };
-        await sleep(260);
-        logLine(`HH.ru: ${vac.open_vacancies_count} активных вакансий`, 'done');
-        renderSignals(enriched);
-
-        currentStep = 3; renderStepper();
-        setAgentStatus(`агент выполняет шаг 4 из ${STEPS.length}`, true);
-        await sleep(260);
-        const lprs = (enriched.lpr_matrix || {}).lprs || [];
-        logLine(`карта власти: ${lprs.length} роли`, 'done');
-        renderPowerMap(lprs);
-
-        currentStep = 4; renderStepper();
-        setAgentStatus(`агент выполняет шаг 5 из ${STEPS.length}`, true);
-        await sleep(240);
-        const verifiedCount = lprs.filter(l => (l.profile_confidence || 0) >= 70).length;
-        logLine(`подтверждено профилей: ${verifiedCount}`, 'done');
-        renderContacts(lprs);
-
-        currentStep = 5; renderStepper();
-        setAgentStatus(`агент выполняет шаг 6 из ${STEPS.length}`, true);
-        await sleep(240);
-        logLine('питчи готовы', 'done');
-        renderPitch(lprs);
-
-        currentStep = 6; renderStepper();
-        setAgentStatus('готово · 6 из 6', false);
-        setWorkspaceBar('готово · 6 из 6', false, companyLabel);
+        renderDemandCard(card);
         loadCompanyQueues();
-        if (enriched.cache_hit) toast('Результат из кэша');
-        else if (enriched.sources_status_note) toast(enriched.sources_status_note);
-
+        toast(card.message || 'Карточка готова');
     } catch (err) {
-        if (loadTimer) { clearInterval(loadTimer); loadTimer = null; }
         setAgentStatus('ошибка', false);
         setWorkspaceBar('ошибка', false, null);
-        const msg = err.name === 'AbortError'
-            ? 'Превышено время ожидания (3 мин). Попробуйте другой ИНН или название компании.'
-            : (err.message || String(err));
+        const msg = err.message || String(err);
         logLine(msg, 'run');
         document.getElementById('results').innerHTML =
             `<div class="card p-5 border-edge">
-                <div class="text-[15px] font-semibold mb-1">Не удалось собрать карту</div>
+                <div class="text-[15px] font-semibold mb-1">Карточку открыть не удалось</div>
                 <p class="text-[13px] text-ink-dim">${msg}</p>
              </div>`;
     } finally {
         document.getElementById('runBtn').disabled = false;
+    }
+}
+
+function renderDemandCard(card) {
+    const companyLabel = `${card.name} · ИНН ${card.inn}`;
+    document.getElementById('workspaceCompany').textContent = companyLabel;
+    setWorkspaceBar('карточка спроса', false, companyLabel);
+    setAgentStatus('готово', false);
+    logLine(`${card.demand_pack_label || 'Сигнал'}: ${card.name}`, 'done');
+
+    renderCompanyCard({
+        name: card.name,
+        inn: card.inn,
+        status: 'ACTIVE',
+        employee_count: null,
+        website: null
+    }, {
+        status: card.card_status,
+        status_label: card.status_label,
+        queue_label: card.demand_pack_label
+    });
+
+    const trigger = card.primary_trigger || {};
+    const person = card.starting_person;
+    const triggerHtml = trigger.url
+        ? `<a href="${trigger.url}" target="_blank" rel="noopener" class="card card-hover p-3.5 block">
+               <div class="text-[13px] font-medium leading-snug mb-1">${trigger.label}</div>
+               <div class="mono text-[10px] text-ink-mute mt-2">${card.demand_pack_label} · источник</div>
+           </a>`
+        : `<div class="card p-4 text-[13px] text-ink-dim">${trigger.label || 'Повод не указан'}</div>`;
+
+    add(`
+    <section class="fade-up">
+        <div class="flex items-center justify-between mb-3.5 flex-wrap gap-2">
+            <div>
+                <h2 class="text-[18px] font-semibold">Повод писать</h2>
+                <p class="text-[13px] text-ink-dim mt-0.5">Живой спрос, не справочник отрасли</p>
+            </div>
+            <span class="chip chip-mint">${card.demand_pack_label || 'Сигнал'}</span>
+        </div>
+        ${triggerHtml}
+        ${card.note ? `<p class="text-[13px] text-ink-dim mt-3">${card.note}</p>` : ''}
+    </section>
+    <section class="fade-up">
+        <h2 class="text-[18px] font-semibold mb-3">С кого начать</h2>
+        <div class="card p-4">
+            <div class="text-[15px] font-semibold">${person ? person.name : 'Имя директора не в карточке'}</div>
+            <div class="text-[13px] text-ink-dim mt-0.5">${person ? person.role : 'Пишите на юрлицо по поводу закупки или найма'}</div>
+            <div class="mono text-[11px] text-ink-mute mt-3 pt-3 border-t border-edge-subtle">${person ? person.source : 'DaData на проде не обязателен для этой карточки'}</div>
+        </div>
+    </section>
+    <section class="fade-up" id="pitchSection">
+        <div class="flex items-center justify-between mb-3.5 flex-wrap gap-2">
+            <div>
+                <h2 class="text-[18px] font-semibold">Черновик письма</h2>
+                <p class="text-[13px] text-ink-dim mt-0.5">Отправляете сами — из своей почты или HH</p>
+            </div>
+            <button type="button" onclick="copyDemandCard()" class="btn btn-primary !py-2 !px-3.5 !text-[13px]">Скопировать</button>
+        </div>
+        <div class="card p-5">
+            <p id="pitchText" class="text-[14px] leading-relaxed text-ink-dim whitespace-pre-line">${card.pitch || ''}</p>
+            <p class="mono text-[11px] text-ink-mute mt-4">${card.message || ''}</p>
+        </div>
+    </section>`);
+    window._demandCopy = card.copy_text || card.pitch || '';
+}
+
+function renderLegacyEnrich(enriched) {
+    const legal = enriched.dadata_legal_profile || {};
+    const companyLabel = `${legal.name || ''} · ИНН ${legal.inn || ''}`;
+    setWorkspaceBar('карточка из ЕГРЮЛ', false, companyLabel);
+    logLine(`ЕГРЮЛ: ${legal.name || ''}`, 'done');
+    renderCompanyCard(legal, enriched.company_card);
+    renderSignals(enriched);
+    const lprs = (enriched.lpr_matrix || {}).lprs || [];
+    if (lprs.length) {
+        renderPowerMap(lprs);
+        renderPitch(lprs);
     }
 }
 
@@ -763,11 +799,15 @@ async function analyzeSite() {
     }
 }
 
-function setQuery(v) { document.getElementById('query').value = v; runAgent(); }
+function setQuery(v) { openDemandCard(v); }
 function exportCsv() { window.location.href = '/api/copilot/export-csv?product_keyword=1С'; }
 function copyPitch() {
     const t = document.getElementById('pitchText');
     if (t) { navigator.clipboard.writeText(t.textContent); toast('Питч скопирован'); }
+}
+function copyDemandCard() {
+    const text = window._demandCopy || (document.getElementById('pitchText') || {}).textContent || '';
+    if (text) { navigator.clipboard.writeText(text); toast('Черновик скопирован — отправьте сами'); }
 }
 function toast(msg) {
     const el = document.getElementById('toast');

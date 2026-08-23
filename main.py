@@ -658,6 +658,12 @@ def startup_memory_schema():
         apply_habr_buyers_seed(memory_store)
     except Exception:
         pass
+    try:
+        from scripts.seed_tender_buyers import apply_tender_buyers_seed
+
+        apply_tender_buyers_seed(memory_store)
+    except Exception:
+        pass
 
 
 @app.get("/health")
@@ -838,13 +844,32 @@ def copilot_queue_summary():
     """Counts for UI dashboards — active companies only."""
     reachable = memory_store.list_companies(queue=company_status.QUEUE_REACHABLE, limit=200)
     in_work = memory_store.list_companies(queue=company_status.QUEUE_IN_WORK, limit=200)
+    hiring = [c for c in in_work if c.get("demand_pack") == "hiring"]
+    procurement = [c for c in in_work if c.get("demand_pack") == "procurement"]
     return {
         "reachable_count": len(reachable),
         "in_work_count": len(in_work),
-        "reachable": reachable[:12],
-        "in_work": in_work[:12],
+        "hiring_count": len(hiring),
+        "procurement_count": len(procurement),
+        "reachable": reachable[:8],
+        "in_work": in_work[:24],
         "memory": memory_store.store_info(),
     }
+
+
+@app.get("/api/copilot/company-card")
+def copilot_company_card(inn: str = Query(..., description="ИНН из листа спроса")):
+    """
+    Карточка из memory: повод, ИНН, с кого начать, питч.
+    DaData не требуется. Контакты не выдумываются. Письмо отправляет продавец.
+    """
+    import company_card as demand_card
+
+    offer = current_seller_profile.model_dump() if hasattr(current_seller_profile, "model_dump") else current_seller_profile.dict()
+    card = demand_card.build_company_card(inn, offer)
+    if not card:
+        raise HTTPException(status_code=404, detail="Компании нет в листе спроса — добавьте её сканом или укажите другой ИНН")
+    return card
 
 
 @app.post("/api/copilot/hh-scan")
@@ -937,11 +962,28 @@ def enrich_company_profile(
         raise HTTPException(status_code=400, detail="Укажите ИНН, сайт или название компании")
 
     try:
-        resolved_inn = demo_mode.resolve_company_query(
-            raw, lambda q: search_company(query=q)
-        )
+        if demo_mode.looks_like_inn(raw) or DADATA_API_KEY:
+            resolved_inn = demo_mode.resolve_company_query(
+                raw, lambda q: search_company(query=q)
+            )
+        else:
+            raise ValueError("Укажите ИНН — DaData не задан, поиск по названию недоступен")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    import company_card as demand_card
+
+    memory_card = demand_card.build_company_card(
+        resolved_inn,
+        current_seller_profile.model_dump() if hasattr(current_seller_profile, "model_dump") else current_seller_profile.dict(),
+    )
+    if not DADATA_API_KEY:
+        if memory_card:
+            return demand_card.card_as_enrich_payload(memory_card)
+        raise HTTPException(
+            status_code=503,
+            detail="DaData не задан. Откройте компанию из листа спроса или задайте DADATA_API_KEY.",
+        )
 
     if not refresh:
         cached = memory_store.get_enrich_payload(resolved_inn)

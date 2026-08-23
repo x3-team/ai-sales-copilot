@@ -9,6 +9,15 @@ LIVE_SEED_INNS = frozenset({
     "9103100540",   # ООО «РУСЬ»
 })
 
+# EIS / zakupki.gov.ru buyer seeds — procurement pack, skip social re-search.
+TENDER_SEED_INNS = frozenset({
+    "3903009923",   # ГП КО «Водоканал»
+    "7604031290",   # Ярославский областной суд
+    "3525432983",   # АО «Вологдагортеплосеть»
+    "4705006785",   # ПАО «Завод «Буревестник»
+    "7725010048",   # ФБУ «НТЦ ЯРБ»
+})
+
 # Habr Career buyer seeds — trigger-only, skip social re-search on enrich.
 HABR_BUYER_SEED_INNS = frozenset({
     "7706729736",   # АО «Гринатом»
@@ -43,7 +52,7 @@ INACTIVE_COMPANY_INNS = frozenset({
 def skip_social_discovery(inn: str) -> bool:
     """Do not re-run TenChat / Setka / LinkedIn discovery for seeded companies."""
     key = (inn or "").strip()
-    return key in LIVE_SEED_INNS or key in HABR_BUYER_SEED_INNS
+    return key in LIVE_SEED_INNS or key in HABR_BUYER_SEED_INNS or key in TENDER_SEED_INNS
 
 
 def is_integrator(inn: str) -> bool:

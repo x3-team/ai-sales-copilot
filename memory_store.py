@@ -558,6 +558,46 @@ def upsert_from_habr_vacancy(
     return company_inn
 
 
+def upsert_from_tender(
+    company_inn: str,
+    company_name: str,
+    tender_url: str,
+    *,
+    title: str = "",
+    note: Optional[str] = None,
+) -> Optional[str]:
+    """Register EIS / zakupki.gov.ru notice as demand trigger — not LPR contacts."""
+    if not company_inn:
+        return None
+    url = (tender_url or "").strip()
+    label = (title or "").strip()
+    if url and label:
+        trigger = f"Закупка: {label} {url}"
+    elif url:
+        trigger = f"Закупка: {url}"
+    elif label:
+        trigger = f"Закупка: {label}"
+    else:
+        trigger = "Закупка"
+    upsert_company(
+        company_inn,
+        name=company_name or "",
+        sources=["zakupki", "procurement"],
+        triggers=[trigger],
+    )
+    if note:
+        patch_company_seed_note(company_inn, note)
+    people = list_people(company_inn)
+    has_director = any(_is_real_name(p.get("fio")) for p in people)
+    refresh_company_status(
+        company_inn,
+        ceo_name=next((p.get("fio") for p in people if _is_real_name(p.get("fio"))), None),
+    )
+    if not has_director:
+        upsert_company(company_inn, name=company_name or "", card_status=company_status.STATUS_SIGNAL)
+    return company_inn
+
+
 def patch_company_seed_note(inn: str, note: str) -> None:
     """Attach idempotent seed note to enrich_payload without touching contacts."""
     row = get_company(inn)
@@ -688,6 +728,12 @@ def list_companies(
         item["status_label"] = company_status.status_label(st)
         item["queue"] = company_status.queue_for_status(st)
         item["active"] = inn not in INACTIVE_COMPANY_INNS
+        from company_card import PACK_LABELS, detect_pack, extract_primary_trigger
+
+        pack = detect_pack(item["triggers"])
+        item["demand_pack"] = pack
+        item["demand_pack_label"] = PACK_LABELS.get(pack, pack)
+        item["primary_trigger"] = extract_primary_trigger(item["triggers"])
         out.append(item)
     return out
 
