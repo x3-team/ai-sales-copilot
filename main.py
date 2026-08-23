@@ -1097,13 +1097,12 @@ def enrich_company_profile(
 
     import company_card as demand_card
 
-    memory_card = demand_card.build_company_card(
-        resolved_inn,
-        current_seller_profile.model_dump() if hasattr(current_seller_profile, "model_dump") else current_seller_profile.dict(),
-    )
+    offer = current_seller_profile.model_dump() if hasattr(current_seller_profile, "model_dump") else current_seller_profile.dict()
+    memory_card = demand_card.build_company_card(resolved_inn, offer)
+    if memory_card:
+        return demand_card.card_as_enrich_payload(memory_card)
+
     if not DADATA_API_KEY:
-        if memory_card:
-            return demand_card.card_as_enrich_payload(memory_card)
         raise HTTPException(
             status_code=503,
             detail="DaData не задан. Откройте компанию из листа спроса или задайте DADATA_API_KEY.",
