@@ -524,10 +524,12 @@ def copilot_sources_status():
     from tenchat_auth import TenChatAuthClient
     from hh_auth import HHAuthClient
     import tenderland
+    import gosplan
     tenchat = TenChatAuthClient.session_status()
     hh = HHAuthClient.session_status()
     hh_vac = HHAuthClient.probe_vacancies_api()
     tl = tenderland.session_status()
+    gp = gosplan.session_status()
     optional_full = tenchat.get("authenticated") or hh.get("resume_access")
     return {
         "mvp_mode": "full" if optional_full else "core_without_byos",
@@ -551,6 +553,11 @@ def copilot_sources_status():
                 "available": bool(tl.get("available")),
                 "label": "Tenderland",
                 "detail": tl.get("message") or "Агрегатор закупок",
+            },
+            "gosplan": {
+                "available": bool(gp.get("available")),
+                "label": "Gosplan (ЕИС REST)",
+                "detail": gp.get("message") or "REST к данным ЕИС",
             },
             "website": {
                 "available": True,
@@ -983,12 +990,12 @@ def copilot_tender_scan(
     limit: int = Query(5, ge=1, le=12),
     product_keyword: str = Query("", description="Ключи оффера для поиска закупок"),
 ):
-    """Поиск закупок через Tenderland. Без ключа — честный статус, без фейковых заказчиков."""
-    import tenderland
+    """Поиск закупок: Gosplan (ЕИС REST) + Tenderland. Без ключей — test Gosplan и честные статусы."""
+    import procurement_scan
     from live_companies import is_active_company, is_integrator
 
     kw = (product_keyword or current_seller_profile.product_name or "").strip()
-    scan = tenderland.scan_for_offer(kw, limit=limit)
+    scan = procurement_scan.scan_for_offer(kw, limit=limit)
     ingested: List[Dict[str, Any]] = []
     skipped: List[Dict[str, str]] = []
     offer = (
@@ -1033,6 +1040,7 @@ def copilot_tender_scan(
         "scan_status": scan.get("scan_status"),
         "scan_message": scan.get("scan_message"),
         "raw_count": scan.get("raw_count", 0),
+        "sources": scan.get("sources") or {},
         "ingested_count": len(ingested),
         "companies": ingested,
         "skipped": skipped[:10],

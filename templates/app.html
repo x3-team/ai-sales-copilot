@@ -303,7 +303,7 @@ async function runHhScan() {
     status.classList.remove('hidden');
     const offerName = (document.getElementById('offerName') || {}).value || '';
     const q = encodeURIComponent(offerName || '1С');
-    status.textContent = 'HH (найм) и Tenderland (закупки) по вашему офферу';
+    status.textContent = 'HH (найм), Gosplan + Tenderland (закупки) по вашему офферу';
     try {
         const [hhRes, tlRes] = await Promise.all([
             fetchWithTimeout(`/api/copilot/hh-scan?limit=5&product_keyword=${q}`, 120000),
