@@ -102,6 +102,29 @@ def _ensure_sqlite_status_columns(conn: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_seller_profile_table(conn: Any) -> None:
+    if db_backend() == "postgres":
+        conn.cursor().execute(
+            """
+            CREATE TABLE IF NOT EXISTS seller_profile (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+    else:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS seller_profile (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                payload TEXT NOT NULL DEFAULT '{}',
+                updated_at REAL NOT NULL
+            )
+            """
+        )
+
+
 def ensure_schema() -> None:
     global _migrations_applied
     if _migrations_applied:
@@ -120,6 +143,16 @@ def ensure_schema() -> None:
                 conn.autocommit = True
                 with conn.cursor() as cur:
                     cur.execute(sql)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS seller_profile (
+                            id INTEGER PRIMARY KEY CHECK (id = 1),
+                            payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    )
             finally:
                 conn.close()
     else:
@@ -132,6 +165,7 @@ def ensure_schema() -> None:
         try:
             conn.executescript(sql)
             _ensure_sqlite_status_columns(conn)
+            _ensure_seller_profile_table(conn)
             conn.commit()
         finally:
             conn.close()
@@ -1057,3 +1091,52 @@ def slots_needing_search(stored_lprs: List[Dict[str, Any]]) -> List[str]:
         if not entry or not _entry_is_complete(entry):
             missing.append(slot_ui)
     return missing
+
+
+def get_seller_profile() -> Optional[Dict[str, Any]]:
+    """Load persisted seller offer profile (single row)."""
+    ensure_schema()
+    with _connection() as conn:
+        if db_backend() == "postgres":
+            cur = conn.cursor()
+            cur.execute("SELECT payload FROM seller_profile WHERE id = 1")
+            row = cur.fetchone()
+        else:
+            row = conn.execute("SELECT payload FROM seller_profile WHERE id = 1").fetchone()
+        if not row:
+            return None
+        payload = row[0] if isinstance(row, tuple) else row["payload"]
+        data = _json_load(payload, {})
+        return data if isinstance(data, dict) and data else None
+
+
+def save_seller_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist seller offer profile to SQLite / Postgres."""
+    ensure_schema()
+    now = _now_ts()
+    blob = _json_dump(profile or {})
+    with _connection() as conn:
+        if db_backend() == "postgres":
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO seller_profile (id, payload, updated_at)
+                VALUES (1, %s::jsonb, NOW())
+                ON CONFLICT (id) DO UPDATE SET
+                    payload = EXCLUDED.payload,
+                    updated_at = NOW()
+                """,
+                (blob,),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO seller_profile (id, payload, updated_at)
+                VALUES (1, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET
+                    payload = excluded.payload,
+                    updated_at = excluded.updated_at
+                """,
+                (blob, now),
+            )
+    return profile

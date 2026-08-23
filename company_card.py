@@ -56,10 +56,14 @@ def starting_person_from_people(people: List[Dict[str, Any]]) -> Optional[Dict[s
         fio = (person.get("fio") or "").strip()
         if not company_status.is_real_name(fio):
             continue
+        sources = person.get("sources") or []
+        if isinstance(sources, str):
+            sources = []
+        src = "ЕГРЮЛ / DaData" if "dadata" in sources else "ЕГРЮЛ / реестр (seed)"
         return {
             "name": fio,
             "role": (person.get("role") or "руководитель").strip(),
-            "source": "ЕГРЮЛ / реестр (seed)",
+            "source": src,
         }
     return None
 
@@ -122,6 +126,10 @@ def build_company_card(inn: str, offer: Optional[Dict[str, Any]] = None) -> Opti
     if not row:
         return None
 
+    from company_enrich import ensure_ceo_from_dadata
+
+    ensure_ceo_from_dadata(inn)
+
     people = memory_store.list_people(inn)
     triggers = row.get("triggers") or []
     sources = row.get("sources") or []
@@ -163,6 +171,7 @@ def build_company_card(inn: str, offer: Optional[Dict[str, Any]] = None) -> Opti
         "pitch": pitch,
         "bid_advice": bid,
         "dadata_available": dadata_available(),
+        "ceo_enriched": bool(person and person.get("source") == "ЕГРЮЛ / DaData"),
         "send_yourself": True,
         "message": (
             "Письмо отправляете сами. Личный контакт не собран."

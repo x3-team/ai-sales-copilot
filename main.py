@@ -90,6 +90,47 @@ class WebsiteAnalyzeRequest(BaseModel):
 
 current_seller_profile = SellerProductProfile()
 
+
+def _profile_to_dict(profile: SellerProductProfile) -> Dict[str, Any]:
+    if hasattr(profile, "model_dump"):
+        return profile.model_dump()
+    return profile.dict()
+
+
+def _apply_seller_profile(data: Dict[str, Any]) -> SellerProductProfile:
+    global current_seller_profile
+    payload = dict(data or {})
+    for key in ("min_deal_amount", "max_deal_amount"):
+        val = payload.get(key)
+        if val in ("", None):
+            payload[key] = None
+        else:
+            try:
+                payload[key] = float(val)
+            except (TypeError, ValueError):
+                payload[key] = None
+    if hasattr(SellerProductProfile, "model_validate"):
+        current_seller_profile = SellerProductProfile.model_validate(payload)
+    else:
+        current_seller_profile = SellerProductProfile(**payload)
+    return current_seller_profile
+
+
+def _persist_seller_profile(profile: SellerProductProfile) -> None:
+    try:
+        memory_store.save_seller_profile(_profile_to_dict(profile))
+    except Exception:
+        pass
+
+
+def _load_persisted_seller_profile() -> None:
+    try:
+        saved = memory_store.get_seller_profile()
+        if saved:
+            _apply_seller_profile(saved)
+    except Exception:
+        pass
+
 @app.get("/api/seller/profile")
 def get_seller_profile():
     return current_seller_profile
@@ -98,6 +139,7 @@ def get_seller_profile():
 def update_seller_profile(profile: SellerProductProfile):
     global current_seller_profile
     current_seller_profile = profile
+    _persist_seller_profile(profile)
     return {"status": "success", "profile": current_seller_profile}
 
 @app.post("/api/seller/analyze-website")
@@ -160,6 +202,7 @@ def analyze_website(req: WebsiteAnalyzeRequest):
 
         global current_seller_profile
         current_seller_profile = detected_profile
+        _persist_seller_profile(detected_profile)
 
         return {
             "status": "success",
@@ -177,6 +220,7 @@ def analyze_website(req: WebsiteAnalyzeRequest):
             value_proposition="Повышение эффективности процессов и рост конверсии B2B продаж"
         )
         current_seller_profile = fallback_profile
+        _persist_seller_profile(fallback_profile)
         return {
             "status": "warning",
             "message": f"Сайт обработан по домену: {e}",
@@ -673,6 +717,7 @@ def startup_memory_schema():
         apply_tender_buyers_seed(memory_store)
     except Exception:
         pass
+    _load_persisted_seller_profile()
 
 
 @app.get("/health")
@@ -970,6 +1015,9 @@ def copilot_tender_scan(
             title=item.get("title") or "",
             note=note,
         )
+        from company_enrich import ensure_ceo_from_dadata
+
+        ensure_ceo_from_dadata(inn)
         import company_card as demand_card
 
         card = demand_card.build_company_card(inn, offer)

@@ -115,3 +115,93 @@ def _names_match(a: str, b: str) -> bool:
 
 def _loose_names_match(query: str, matched: str) -> bool:
     return _names_match(_normalize_name(query), _normalize_name(matched))
+
+
+def find_party_by_inn(inn: str) -> Dict[str, Any]:
+    """
+    Lookup legal entity by INN via DaData findById/party.
+    Returns normalized fields or empty result with reason.
+    """
+    clean = "".join(ch for ch in (inn or "") if ch.isdigit())
+    if len(clean) not in (10, 12):
+        return {
+            "inn": clean,
+            "name": "",
+            "ceo": "",
+            "ceo_post": "",
+            "active": False,
+            "reason": "bad_inn",
+        }
+    if not is_configured():
+        return {
+            "inn": clean,
+            "name": "",
+            "ceo": "",
+            "ceo_post": "",
+            "active": False,
+            "reason": "dadata_missing",
+        }
+
+    try:
+        url = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party"
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": f"Token {os.environ['DADATA_API_KEY'].strip()}",
+        }
+        resp = requests.post(url, json={"query": clean}, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return {
+                "inn": clean,
+                "name": "",
+                "ceo": "",
+                "ceo_post": "",
+                "active": False,
+                "reason": f"dadata_http_{resp.status_code}",
+            }
+        suggestions = resp.json().get("suggestions") or []
+        if not suggestions:
+            return {
+                "inn": clean,
+                "name": "",
+                "ceo": "",
+                "ceo_post": "",
+                "active": False,
+                "reason": "not_found",
+            }
+        item = suggestions[0]
+        data = item.get("data") or {}
+        state = data.get("state") or {}
+        status = (state.get("status") or "").upper()
+        if status in INACTIVE_STATE_STATUSES:
+            return {
+                "inn": clean,
+                "name": (item.get("value") or "").strip(),
+                "ceo": "",
+                "ceo_post": "",
+                "active": False,
+                "reason": "inactive",
+            }
+        management = data.get("management") or {}
+        ceo = ""
+        ceo_post = ""
+        if isinstance(management, dict):
+            ceo = (management.get("name") or "").strip()
+            ceo_post = (management.get("post") or "").strip()
+        return {
+            "inn": (data.get("inn") or clean).strip(),
+            "name": (item.get("value") or "").strip(),
+            "ceo": ceo,
+            "ceo_post": ceo_post,
+            "active": True,
+            "reason": "ok",
+        }
+    except Exception:
+        return {
+            "inn": clean,
+            "name": "",
+            "ceo": "",
+            "ceo_post": "",
+            "active": False,
+            "reason": "dadata_error",
+        }
