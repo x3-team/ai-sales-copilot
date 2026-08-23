@@ -82,6 +82,8 @@ class SellerProductProfile(BaseModel):
     product_description: str = "Автоматизация учёта, доработка конфигураций 1С и проектная поддержка для B2B"
     target_icp: str = "Средний и крупный B2B-бизнес с отделом учёта и IT"
     value_proposition: str = "Сокращаем срок закрытия периода, снимаем техдолг 1С и закрываем проектные задачи под ключ без долгого найма"
+    min_deal_amount: Optional[float] = None
+    max_deal_amount: Optional[float] = None
 
 class WebsiteAnalyzeRequest(BaseModel):
     url: str
@@ -477,9 +479,11 @@ def copilot_sources_status():
     """Статус интеграций: core (без cookies) + optional BYOS (TenChat, HH Employer)."""
     from tenchat_auth import TenChatAuthClient
     from hh_auth import HHAuthClient
+    import tenderland
     tenchat = TenChatAuthClient.session_status()
     hh = HHAuthClient.session_status()
     hh_vac = HHAuthClient.probe_vacancies_api()
+    tl = tenderland.session_status()
     optional_full = tenchat.get("authenticated") or hh.get("resume_access")
     return {
         "mvp_mode": "full" if optional_full else "core_without_byos",
@@ -498,6 +502,11 @@ def copilot_sources_status():
                 "available": True,
                 "label": "Хабр Карьера",
                 "detail": "Сигналы IT-найма",
+            },
+            "tenderland": {
+                "available": bool(tl.get("available")),
+                "label": "Tenderland",
+                "detail": tl.get("message") or "Агрегатор закупок",
             },
             "website": {
                 "available": True,
@@ -919,6 +928,64 @@ def copilot_hh_scan_1c(
         "found_vacancies": len(scan.get("items") or []),
         "ingested_count": len(ingested),
         "skipped_count": len(skipped),
+        "companies": ingested,
+        "skipped": skipped[:10],
+    }
+
+
+@app.post("/api/copilot/tender-scan")
+def copilot_tender_scan(
+    limit: int = Query(5, ge=1, le=12),
+    product_keyword: str = Query("", description="Ключи оффера для поиска закупок"),
+):
+    """Поиск закупок через Tenderland. Без ключа — честный статус, без фейковых заказчиков."""
+    import tenderland
+    from live_companies import is_active_company, is_integrator
+
+    kw = (product_keyword or current_seller_profile.product_name or "").strip()
+    scan = tenderland.scan_for_offer(kw, limit=limit)
+    ingested: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, str]] = []
+    offer = (
+        current_seller_profile.model_dump()
+        if hasattr(current_seller_profile, "model_dump")
+        else current_seller_profile.dict()
+    )
+    for item in scan.get("items") or []:
+        inn = (item.get("inn") or "").strip()
+        name = (item.get("name") or "").strip()
+        if not inn:
+            skipped.append({"employer": name, "reason": "no_inn"})
+            continue
+        if is_integrator(inn) or not is_active_company(inn):
+            skipped.append({"employer": name, "inn": inn, "reason": "skip"})
+            continue
+        note = item.get("title") or ""
+        if item.get("price_text"):
+            note = f"{note}. НМЦК {item['price_text']}".strip(". ")
+        memory_store.upsert_from_tender(
+            inn,
+            name,
+            item.get("url") or "",
+            title=item.get("title") or "",
+            note=note,
+        )
+        import company_card as demand_card
+
+        card = demand_card.build_company_card(inn, offer)
+        ingested.append({
+            "inn": inn,
+            "name": name,
+            "title": item.get("title"),
+            "url": item.get("url"),
+            "bid_advice": (card or {}).get("bid_advice"),
+        })
+    return {
+        "product_keyword": kw,
+        "scan_status": scan.get("scan_status"),
+        "scan_message": scan.get("scan_message"),
+        "raw_count": scan.get("raw_count", 0),
+        "ingested_count": len(ingested),
         "companies": ingested,
         "skipped": skipped[:10],
     }

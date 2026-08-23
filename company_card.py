@@ -138,6 +138,15 @@ def build_company_card(inn: str, offer: Optional[Dict[str, Any]] = None) -> Opti
         trigger_label=trigger.get("label") or "",
         pack=pack,
     )
+    bid = None
+    if pack == PACK_PROCUREMENT:
+        from bid_advice import advise_bid
+
+        bid = advise_bid(
+            offer,
+            title=trigger.get("label") or "",
+            note=note,
+        )
     card = {
         "inn": inn,
         "name": row.get("name") or "",
@@ -152,6 +161,7 @@ def build_company_card(inn: str, offer: Optional[Dict[str, Any]] = None) -> Opti
         "starting_person": person,
         "people_count": len(people),
         "pitch": pitch,
+        "bid_advice": bid,
         "dadata_available": dadata_available(),
         "send_yourself": True,
         "message": (

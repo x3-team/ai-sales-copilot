@@ -184,6 +184,16 @@
                 <label class="mono text-[10px] uppercase tracking-[.12em] text-ink-mute block mb-1.5">Ценность для клиента</label>
                 <textarea id="offerValue" rows="3" class="field resize-none"></textarea>
             </div>
+            <div class="grid grid-cols-2 gap-2">
+                <div>
+                    <label class="mono text-[10px] uppercase tracking-[.12em] text-ink-mute block mb-1.5">Мин. НМЦК, ₽</label>
+                    <input id="offerMinDeal" class="field" type="number" placeholder="не задано">
+                </div>
+                <div>
+                    <label class="mono text-[10px] uppercase tracking-[.12em] text-ink-mute block mb-1.5">Макс. НМЦК, ₽</label>
+                    <input id="offerMaxDeal" class="field" type="number" placeholder="не задано">
+                </div>
+            </div>
         </div>
         <div class="flex justify-end gap-2 mt-6">
             <button type="button" onclick="closeOffer()" class="btn btn-ghost">Отмена</button>
@@ -289,32 +299,31 @@ async function runHhScan() {
     const btn = document.getElementById('hhScanBtn');
     const status = document.getElementById('hhScanStatus');
     btn.disabled = true;
-    btn.textContent = 'Сканируем HH…';
+    btn.textContent = 'Ищем спрос…';
     status.classList.remove('hidden');
-    status.textContent = 'HH.ru: поиск компаний с вакансиями 1С (консультант, аналитик, ЗУП, ERP…) — 30–90 сек';
+    const offerName = (document.getElementById('offerName') || {}).value || '';
+    const q = encodeURIComponent(offerName || '1С');
+    status.textContent = 'HH (найм) и Tenderland (закупки) по вашему офферу';
     try {
-        const res = await fetchWithTimeout('/api/copilot/hh-scan?limit=5', 120000);
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.detail || 'Скан не удался');
-        const scanStatus = data.scan_status || 'unknown';
-        const scanMsg = data.scan_message || '';
-        const statusByScan = {
-            ok: scanMsg || `Добавлено ${data.ingested_count} компаний с ИНН (триггер HH)`,
-            hh_unreachable: scanMsg || 'Скан не видит HH — API недоступен с этого сервера',
-            hh_empty: scanMsg || 'HH API доступен, вакансий 1С по запросу не найдено',
-            dadata_missing: scanMsg || 'DaData не настроен — нельзя подтвердить ИНН компаний',
-            no_inn_matches: scanMsg || `HH вернул вакансии (${data.raw_vacancy_count || 0}), но ИНН не подтверждён`,
-        };
-        status.textContent = statusByScan[scanStatus] || scanMsg || `Статус: ${scanStatus}`;
-        status.classList.toggle('text-amber-600', scanStatus !== 'ok');
-        status.classList.toggle('text-ink-dim', scanStatus === 'ok');
+        const [hhRes, tlRes] = await Promise.all([
+            fetchWithTimeout(`/api/copilot/hh-scan?limit=5&product_keyword=${q}`, 120000),
+            fetchWithTimeout(`/api/copilot/tender-scan?limit=5&product_keyword=${q}`, 120000),
+        ]);
+        const hh = await hhRes.json().catch(() => ({}));
+        const tl = await tlRes.json().catch(() => ({}));
+        const parts = [
+            hh.scan_message || `HH: ${hh.scan_status || 'нет ответа'}`,
+            tl.scan_message || `Закупки: ${tl.scan_status || 'нет ответа'}`,
+        ];
+        status.textContent = parts.join(' · ');
+        const ok = hh.scan_status === 'ok' || tl.scan_status === 'ok';
+        status.classList.toggle('text-amber-600', !ok);
+        status.classList.toggle('text-ink-dim', ok);
         await loadCompanyQueues();
-        if (scanStatus === 'ok' && data.ingested_count > 0) {
-            toast(`HH scan: +${data.ingested_count} компаний`);
-        }
+        if (ok) toast(`+${(hh.ingested_count || 0) + (tl.ingested_count || 0)} в лист`);
     } catch (err) {
         status.textContent = err.name === 'AbortError'
-            ? 'Таймаут скана HH — попробуйте снова'
+            ? 'Таймаут поиска спроса'
             : (err.message || 'Ошибка скана');
     } finally {
         btn.disabled = false;
@@ -540,6 +549,14 @@ function renderDemandCard(card) {
             <div class="mono text-[11px] text-ink-mute mt-3 pt-3 border-t border-edge-subtle">${person ? person.source : 'DaData на проде не обязателен для этой карточки'}</div>
         </div>
     </section>
+    ${card.bid_advice ? `
+    <section class="fade-up">
+        <h2 class="text-[18px] font-semibold mb-3">Участвовать?</h2>
+        <div class="card p-4">
+            <div class="text-[15px] font-semibold">${card.bid_advice.verdict_label}</div>
+            <ul class="mt-2 space-y-1">${(card.bid_advice.reasons || []).map(r => `<li class="text-[13px] text-ink-dim">· ${r}</li>`).join('')}</ul>
+        </div>
+    </section>` : ''}
     <section class="fade-up" id="pitchSection">
         <div class="flex items-center justify-between mb-3.5 flex-wrap gap-2">
             <div>
@@ -760,6 +777,8 @@ async function loadOffer() {
         document.getElementById('offerName').value = d.product_name || '';
         document.getElementById('offerDesc').value = d.product_description || '';
         document.getElementById('offerValue').value = d.value_proposition || '';
+        document.getElementById('offerMinDeal').value = d.min_deal_amount ?? '';
+        document.getElementById('offerMaxDeal').value = d.max_deal_amount ?? '';
     } catch (e) { /* empty */ }
 }
 
@@ -773,7 +792,9 @@ async function saveOffer() {
             product_name: document.getElementById('offerName').value,
             product_description: document.getElementById('offerDesc').value,
             target_icp: 'B2B компании',
-            value_proposition: document.getElementById('offerValue').value
+            value_proposition: document.getElementById('offerValue').value,
+            min_deal_amount: document.getElementById('offerMinDeal').value || null,
+            max_deal_amount: document.getElementById('offerMaxDeal').value || null
         })
     });
     closeOffer();
