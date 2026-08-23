@@ -529,7 +529,7 @@ def copilot_sources_status():
     hh = HHAuthClient.session_status()
     hh_vac = HHAuthClient.probe_vacancies_api()
     tl = tenderland.session_status()
-    gp = gosplan.session_status()
+    gp = gosplan.probe_api()
     optional_full = tenchat.get("authenticated") or hh.get("resume_access")
     return {
         "mvp_mode": "full" if optional_full else "core_without_byos",
@@ -558,6 +558,8 @@ def copilot_sources_status():
                 "available": bool(gp.get("available")),
                 "label": "Gosplan (ЕИС REST)",
                 "detail": gp.get("message") or "REST к данным ЕИС",
+                "mode": gp.get("mode"),
+                "base_url": gp.get("base_url"),
             },
             "website": {
                 "available": True,

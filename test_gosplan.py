@@ -76,9 +76,26 @@ class GosplanScanTest(unittest.TestCase):
 
     def test_session_test_mode_without_key(self):
         os.environ.pop("GOSPLAN_API_KEY", None)
+        os.environ["GOSPLAN_API_BASE"] = gosplan.TEST_BASE
         st = gosplan.session_status()
         self.assertTrue(st["available"])
         self.assertEqual(st["mode"], "test")
+        self.assertEqual(st["base_url"], gosplan.TEST_BASE)
+
+    def test_scan_rate_limit_message(self):
+        with patch.object(gosplan, "search_purchases", return_value=([], "http_429")):
+            result = gosplan.scan_for_offer("поставка", limit=3)
+        self.assertEqual(result["scan_status"], "gosplan_unreachable")
+        self.assertIn("429", result["scan_message"])
+
+    def test_probe_rate_limited(self):
+        os.environ.pop("GOSPLAN_API_KEY", None)
+        os.environ["GOSPLAN_API_BASE"] = gosplan.TEST_BASE
+        with patch.object(gosplan, "_get_json", return_value=(None, "http_429")):
+            probe = gosplan.probe_api()
+        self.assertTrue(probe["available"])
+        self.assertTrue(probe.get("rate_limited"))
+        self.assertEqual(probe["base_url"], gosplan.TEST_BASE)
 
 
 if __name__ == "__main__":

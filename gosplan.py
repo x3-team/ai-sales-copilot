@@ -28,22 +28,85 @@ def is_configured() -> bool:
 
 
 def session_status() -> Dict[str, Any]:
-    if _api_key():
+    base = _base_url()
+    mode = "prod" if base == PROD_BASE and _api_key() else "test"
+    if _api_key() and base == PROD_BASE:
         return {
             "available": True,
             "configured": True,
             "mode": "prod",
+            "base_url": base,
             "message": "Gosplan API ключ задан (ЕИС 44/223 через REST)",
         }
     return {
         "available": True,
-        "configured": False,
-        "mode": "test",
+        "configured": True,
+        "mode": mode,
+        "base_url": base,
         "message": (
-            "Gosplan test API (v2test.gosplan.info) без ключа, с лимитами. "
+            f"Gosplan test API ({TEST_BASE.replace('https://', '')}) без ключа, с лимитами. "
             "Прод: GOSPLAN_API_KEY (7 дней trial — wiki.gosplan.info)."
         ),
     }
+
+
+def probe_api() -> Dict[str, Any]:
+    """Lightweight health check for sources-status and startup diagnostics."""
+    base = _base_url()
+    mode = "prod" if base == PROD_BASE and _api_key() else "test"
+    host = base.replace("https://", "").replace("http://", "")
+    try:
+        data, err = _get_json(
+            "/fz44/purchases",
+            {
+                "object_info": "поставка",
+                "published_forpast": "7d",
+                "limit": 1,
+                "skip": 0,
+            },
+        )
+        if err == "http_429":
+            return {
+                "available": True,
+                "reachable": True,
+                "configured": True,
+                "mode": mode,
+                "base_url": base,
+                "rate_limited": True,
+                "message": f"Gosplan ({host}): API доступен, но лимит запросов (429). Повторите через минуту.",
+            }
+        if err:
+            if err == "http_401" and not _api_key():
+                detail = f"Gosplan ({host}): нужен GOSPLAN_API_KEY или GOSPLAN_API_BASE={TEST_BASE}"
+            else:
+                detail = f"Gosplan ({host}): ошибка {err}"
+            return {
+                "available": False,
+                "reachable": False,
+                "configured": mode == "test" or bool(_api_key()),
+                "mode": mode,
+                "base_url": base,
+                "message": detail,
+            }
+        found = len(data) if isinstance(data, list) else 0
+        return {
+            "available": True,
+            "reachable": True,
+            "configured": True,
+            "mode": mode,
+            "base_url": base,
+            "sample_count": found,
+            "message": f"Gosplan ({host}, {mode}): API отвечает",
+        }
+    except Exception as exc:
+        return {
+            "available": False,
+            "reachable": False,
+            "configured": mode == "test" or bool(_api_key()),
+            "mode": mode,
+            "base_url": base,
+            "message": f"Gosplan ({host}): {exc}",
+        }
 
 
 def _headers() -> Dict[str, str]:
@@ -69,6 +132,8 @@ def _get_json(path: str, params: Dict[str, Any]) -> Tuple[Any, Optional[str]]:
     url = f"{_base_url()}{path}"
     try:
         resp = requests.get(url, params=params, headers=_headers(), timeout=25)
+        if resp.status_code == 429:
+            return None, "http_429"
         if resp.status_code in (401, 403):
             return None, f"http_{resp.status_code}"
         if resp.status_code == 422:
@@ -215,9 +280,15 @@ def scan_for_offer(
     raw_items, err = search_purchases(product_keyword, limit=max(limit * 4, 20))
     if err:
         msg = f"Gosplan не ответил ({err})"
-        if err == "http_401" and not _api_key():
+        if err == "http_429":
             msg = (
-                "Gosplan prod требует GOSPLAN_API_KEY (test: без ключа на v2test.gosplan.info)"
+                f"Gosplan test ({TEST_BASE.replace('https://', '')}): лимит запросов (429). "
+                "Подождите минуту или задайте GOSPLAN_API_KEY для prod."
+            )
+        elif err == "http_401" and not _api_key():
+            msg = (
+                f"Gosplan prod требует GOSPLAN_API_KEY "
+                f"(test без ключа: GOSPLAN_API_BASE={TEST_BASE})"
             )
         return {
             "scan_status": "gosplan_unreachable",
