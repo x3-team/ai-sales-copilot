@@ -751,6 +751,8 @@ class ProfessionalNetworkScraper:
         ceo_name: str,
         product_domain: str = "1C",
         website_url: Optional[str] = None,
+        only_slots: Optional[tuple] = None,
+        prefilled_by_slot: Optional[dict] = None,
     ) -> List[Dict]:
         """
         Clay-grade «Карта Власти»: Identity Layer → Profile Resolve → SMTP validation.
@@ -762,4 +764,6 @@ class ProfessionalNetworkScraper:
             ceo_name=ceo_name,
             product_domain=product_domain,
             website_url=website_url,
+            only_slots=only_slots,
+            prefilled_by_slot=prefilled_by_slot,
         )

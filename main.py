@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Query, Body, Response, Header, Reque
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from scraper import ProfessionalNetworkScraper, ProfileDorkResolver, ContactEnrichmentEngine
 
 try:
@@ -21,6 +21,8 @@ except ImportError:
 
 import demo_mode
 import lpr_webhook
+import memory_store
+import company_status
 
 app = FastAPI(title="Sales Copilot")
 
@@ -80,11 +82,54 @@ class SellerProductProfile(BaseModel):
     product_description: str = "Автоматизация учёта, доработка конфигураций 1С и проектная поддержка для B2B"
     target_icp: str = "Средний и крупный B2B-бизнес с отделом учёта и IT"
     value_proposition: str = "Сокращаем срок закрытия периода, снимаем техдолг 1С и закрываем проектные задачи под ключ без долгого найма"
+    min_deal_amount: Optional[float] = None
+    max_deal_amount: Optional[float] = None
 
 class WebsiteAnalyzeRequest(BaseModel):
     url: str
 
 current_seller_profile = SellerProductProfile()
+
+
+def _profile_to_dict(profile: SellerProductProfile) -> Dict[str, Any]:
+    if hasattr(profile, "model_dump"):
+        return profile.model_dump()
+    return profile.dict()
+
+
+def _apply_seller_profile(data: Dict[str, Any]) -> SellerProductProfile:
+    global current_seller_profile
+    payload = dict(data or {})
+    for key in ("min_deal_amount", "max_deal_amount"):
+        val = payload.get(key)
+        if val in ("", None):
+            payload[key] = None
+        else:
+            try:
+                payload[key] = float(val)
+            except (TypeError, ValueError):
+                payload[key] = None
+    if hasattr(SellerProductProfile, "model_validate"):
+        current_seller_profile = SellerProductProfile.model_validate(payload)
+    else:
+        current_seller_profile = SellerProductProfile(**payload)
+    return current_seller_profile
+
+
+def _persist_seller_profile(profile: SellerProductProfile) -> None:
+    try:
+        memory_store.save_seller_profile(_profile_to_dict(profile))
+    except Exception:
+        pass
+
+
+def _load_persisted_seller_profile() -> None:
+    try:
+        saved = memory_store.get_seller_profile()
+        if saved:
+            _apply_seller_profile(saved)
+    except Exception:
+        pass
 
 @app.get("/api/seller/profile")
 def get_seller_profile():
@@ -94,6 +139,7 @@ def get_seller_profile():
 def update_seller_profile(profile: SellerProductProfile):
     global current_seller_profile
     current_seller_profile = profile
+    _persist_seller_profile(profile)
     return {"status": "success", "profile": current_seller_profile}
 
 @app.post("/api/seller/analyze-website")
@@ -156,6 +202,7 @@ def analyze_website(req: WebsiteAnalyzeRequest):
 
         global current_seller_profile
         current_seller_profile = detected_profile
+        _persist_seller_profile(detected_profile)
 
         return {
             "status": "success",
@@ -173,6 +220,7 @@ def analyze_website(req: WebsiteAnalyzeRequest):
             value_proposition="Повышение эффективности процессов и рост конверсии B2B продаж"
         )
         current_seller_profile = fallback_profile
+        _persist_seller_profile(fallback_profile)
         return {
             "status": "warning",
             "message": f"Сайт обработан по домену: {e}",
@@ -259,16 +307,48 @@ STATIC_PROSPECT_DATABASE = [
     }
 ]
 
-def generate_dynamic_lprs(inn: str, company_name: str, ceo_from_dadata: str, trigger_info: str = "", website_url: str = None):
+def generate_dynamic_lprs(
+    inn: str,
+    company_name: str,
+    ceo_from_dadata: str,
+    trigger_info: str = "",
+    website_url: str = None,
+    stored_lprs: Optional[List[dict]] = None,
+):
+    from live_companies import skip_social_discovery
+
     clean_name = company_name.replace('ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ', '').replace('ООО', '').replace('ПАО', '').replace('АО', '').strip(' "')
     if not clean_name:
         clean_name = "Компания"
 
-    power_map = ProfessionalNetworkScraper.search_and_enrich_power_map_for_company(
-        clean_name, inn, ceo_from_dadata,
-        product_domain=current_seller_profile.product_name,
-        website_url=website_url,
-    )
+    prefilled = memory_store.lprs_by_slot(stored_lprs or [])
+    missing = memory_store.slots_needing_search(stored_lprs or [])
+    if skip_social_discovery(inn):
+        if stored_lprs:
+            power_map = list(stored_lprs)
+        else:
+            only_slots = ("ceo",)
+            power_map = ProfessionalNetworkScraper.search_and_enrich_power_map_for_company(
+                clean_name, inn, ceo_from_dadata,
+                product_domain=current_seller_profile.product_name,
+                website_url=website_url,
+                only_slots=only_slots,
+                prefilled_by_slot=None,
+            )
+    elif stored_lprs and not missing:
+        power_map = list(stored_lprs)
+    else:
+        only_slots = tuple(missing) if missing else None
+        skip_prefilled = {k: v for k, v in prefilled.items() if k not in (missing or [])}
+        power_map = ProfessionalNetworkScraper.search_and_enrich_power_map_for_company(
+            clean_name, inn, ceo_from_dadata,
+            product_domain=current_seller_profile.product_name,
+            website_url=website_url,
+            only_slots=only_slots,
+            prefilled_by_slot=skip_prefilled if only_slots else None,
+        )
+        if stored_lprs:
+            power_map = memory_store.merge_lpr_lists(stored_lprs, power_map)
 
     email_domain = ContactEnrichmentEngine.resolve_email_domain(website_url, clean_name)
 
@@ -443,8 +523,13 @@ def copilot_sources_status():
     """Статус интеграций: core (без cookies) + optional BYOS (TenChat, HH Employer)."""
     from tenchat_auth import TenChatAuthClient
     from hh_auth import HHAuthClient
+    import tenderland
+    import gosplan
     tenchat = TenChatAuthClient.session_status()
     hh = HHAuthClient.session_status()
+    hh_vac = HHAuthClient.probe_vacancies_api()
+    tl = tenderland.session_status()
+    gp = gosplan.probe_api()
     optional_full = tenchat.get("authenticated") or hh.get("resume_access")
     return {
         "mvp_mode": "full" if optional_full else "core_without_byos",
@@ -455,14 +540,26 @@ def copilot_sources_status():
                 "detail": "ИНН, CEO, адрес" if DADATA_API_KEY else "DADATA_API_KEY не задан",
             },
             "hh": {
-                "available": True,
-                "label": "HH.ru",
-                "detail": "HTML-парсинг вакансий и ролей",
+                "available": bool(hh_vac.get("available")),
+                "label": "HH.ru API",
+                "detail": hh_vac.get("message") or "Публичный API вакансий",
             },
             "habr": {
                 "available": True,
                 "label": "Хабр Карьера",
                 "detail": "Сигналы IT-найма",
+            },
+            "tenderland": {
+                "available": bool(tl.get("available")),
+                "label": "Tenderland",
+                "detail": tl.get("message") or "Агрегатор закупок",
+            },
+            "gosplan": {
+                "available": bool(gp.get("available")),
+                "label": "Gosplan (ЕИС REST)",
+                "detail": gp.get("message") or "REST к данным ЕИС",
+                "mode": gp.get("mode"),
+                "base_url": gp.get("base_url"),
             },
             "website": {
                 "available": True,
@@ -513,7 +610,17 @@ def copilot_sources_status():
                 "message": (
                     "POST /api/copilot/lpr-jobs → webhook_url + HMAC auth для Soprano"
                     if lpr_webhook.is_configured() and lpr_webhook.hmac_configured()
-                    else "Задайте WEBHOOK_BASE_URL (https) и WEBHOOK_HMAC_SECRET на Render"
+                    else "Задайте WEBHOOK_BASE_URL и WEBHOOK_HMAC_SECRET в локальном .env"
+                ),
+            },
+            "memory": {
+                "configured": memory_store.is_configured(),
+                "store": memory_store.store_info(),
+                "label": "Persistent memory (Postgres/SQLite)",
+                "message": (
+                    "DATABASE_URL задан — компании/люди/контакты сохраняются между рестартами"
+                    if memory_store.db_backend() == "postgres"
+                    else "Локальный SQLite в data/ — переживает рестарт на этой машине"
                 ),
             },
         },
@@ -588,9 +695,47 @@ class LprJobCreateRequest(BaseModel):
     auto_submit: bool = True
 
 
+@app.on_event("startup")
+def startup_memory_schema():
+    try:
+        memory_store.ensure_schema()
+    except Exception:
+        pass
+    try:
+        import lpr_job_store
+
+        lpr_job_store.init_db()
+    except Exception:
+        pass
+    try:
+        from scripts.seed_live_companies import apply_live_seed
+
+        if memory_store.get_company("4217184336") is None:
+            apply_live_seed(memory_store)
+    except Exception:
+        pass
+    try:
+        from scripts.seed_habr_buyers import apply_habr_buyers_seed
+
+        apply_habr_buyers_seed(memory_store)
+    except Exception:
+        pass
+    try:
+        from scripts.seed_tender_buyers import apply_tender_buyers_seed
+
+        apply_tender_buyers_seed(memory_store)
+    except Exception:
+        pass
+    _load_persisted_seller_profile()
+
+
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "host": "local",
+        "memory": memory_store.store_info(),
+    }
 
 
 @app.post("/api/copilot/lpr-jobs")
@@ -603,12 +748,12 @@ def create_lpr_job(body: LprJobCreateRequest):
     if not lpr_webhook.is_configured():
         raise HTTPException(
             status_code=503,
-            detail="WEBHOOK_BASE_URL не задан — укажите публичный HTTPS URL сервиса на Render",
+            detail="WEBHOOK_BASE_URL не задан — укажите http://127.0.0.1:8000 в локальном .env",
         )
     if not lpr_webhook.hmac_configured():
         raise HTTPException(
             status_code=503,
-            detail="WEBHOOK_HMAC_SECRET не задан — сгенерируйте секрет в Render env",
+            detail="WEBHOOK_HMAC_SECRET не задан — задайте секрет в локальном .env",
         )
     prompt = body.prompt or lpr_webhook.default_prompt(
         body.company_name or "Компания",
@@ -682,7 +827,7 @@ async def lpr_inbound_webhook_legacy():
 
 @app.post("/api/copilot/lpr-jobs/{job_id}/apply-to-enrich")
 def apply_lpr_job_to_enrich(job_id: str, inn: str = Query(..., description="ИНН компании в кэше enrich")):
-    """Подмешивает готовых кандидатов из webhook-job в кэш enrich по ИНН."""
+    """Подмешивает готовых кандидатов из webhook-job в persistent memory по ИНН."""
     try:
         job = lpr_webhook.get_job(job_id)
     except KeyError as exc:
@@ -690,14 +835,17 @@ def apply_lpr_job_to_enrich(job_id: str, inn: str = Query(..., description="ИН
     if job.get("status") != "completed":
         raise HTTPException(status_code=409, detail=f"Job status: {job.get('status')}")
 
-    cached = demo_mode.cache_get(inn)
-    if not cached:
-        raise HTTPException(status_code=404, detail="Enrich cache miss — сначала запустите enrich по этому ИНН")
-
-    extra = lpr_webhook.candidates_to_lpr_entries(job.get("candidates") or [])
-    if not extra:
+    candidates = job.get("candidates") or []
+    if not candidates:
         raise HTTPException(status_code=422, detail="Job completed but candidates empty")
 
+    memory_store.upsert_from_inbound(inn, job.get("company_name") or "", candidates)
+
+    cached = memory_store.get_enrich_payload(inn)
+    if not cached:
+        raise HTTPException(status_code=404, detail="Enrich memory miss — сначала запустите enrich по этому ИНН")
+
+    extra = lpr_webhook.candidates_to_lpr_entries(candidates)
     merged = dict(cached)
     lprs = list((merged.get("lpr_matrix") or {}).get("lprs") or [])
     seen_urls = {p.get("profile_url") for p in lprs if p.get("profile_url")}
@@ -711,8 +859,208 @@ def apply_lpr_job_to_enrich(job_id: str, inn: str = Query(..., description="ИН
 
     merged["lpr_matrix"] = {"total_lprs": len(lprs), "lprs": lprs}
     merged["lpr_webhook_applied"] = {"job_id": job_id, "added": len(extra)}
-    demo_mode.cache_set(inn, merged)
+    memory_store.save_enrich_payload(inn, merged)
     return merged
+
+
+@app.get("/api/copilot/memory/companies/{inn}")
+def memory_get_company(inn: str):
+    """Чтение сохранённой компании и power map из persistent memory."""
+    row = memory_store.get_company(inn)
+    if not row:
+        raise HTTPException(status_code=404, detail="Company not in memory")
+    st = row.get("card_status") or company_status.STATUS_SIGNAL
+    return {
+        "company": row,
+        "company_card": company_status.card_status_payload(
+            st, triggers=row.get("triggers") or []
+        ),
+        "people": memory_store.list_people(inn),
+        "power_map": memory_store.get_power_map(inn),
+    }
+
+
+@app.get("/api/copilot/company-queue")
+def copilot_company_queue(
+    queue: str = Query(
+        "in_work",
+        description="reachable — можно касаться; in_work — сигнал и есть имя",
+    ),
+    limit: int = Query(50, ge=1, le=200),
+):
+    q = (queue or "in_work").strip().lower()
+    if q not in (company_status.QUEUE_REACHABLE, company_status.QUEUE_IN_WORK):
+        raise HTTPException(
+            status_code=400,
+            detail="queue must be reachable or in_work",
+        )
+    items = memory_store.list_companies(queue=q, limit=limit)
+    return {
+        "queue": q,
+        "queue_label": "Можно касаться" if q == company_status.QUEUE_REACHABLE else "В работе",
+        "count": len(items),
+        "companies": items,
+    }
+
+
+@app.get("/api/copilot/queue-summary")
+def copilot_queue_summary():
+    """Counts for UI dashboards — active companies only."""
+    reachable = memory_store.list_companies(queue=company_status.QUEUE_REACHABLE, limit=200)
+    in_work = memory_store.list_companies(queue=company_status.QUEUE_IN_WORK, limit=200)
+    hiring = [c for c in in_work if c.get("demand_pack") == "hiring"]
+    procurement = [c for c in in_work if c.get("demand_pack") == "procurement"]
+    return {
+        "reachable_count": len(reachable),
+        "in_work_count": len(in_work),
+        "hiring_count": len(hiring),
+        "procurement_count": len(procurement),
+        "reachable": reachable[:8],
+        "in_work": in_work[:24],
+        "memory": memory_store.store_info(),
+    }
+
+
+@app.get("/api/copilot/company-card")
+def copilot_company_card(inn: str = Query(..., description="ИНН из листа спроса")):
+    """
+    Карточка из memory: повод, ИНН, с кого начать, питч.
+    DaData не требуется. Контакты не выдумываются. Письмо отправляет продавец.
+    """
+    import company_card as demand_card
+
+    offer = current_seller_profile.model_dump() if hasattr(current_seller_profile, "model_dump") else current_seller_profile.dict()
+    card = demand_card.build_company_card(inn, offer)
+    if not card:
+        raise HTTPException(status_code=404, detail="Компании нет в листе спроса — добавьте её сканом или укажите другой ИНН")
+    return card
+
+
+@app.post("/api/copilot/hh-scan")
+def copilot_hh_scan_1c(
+    limit: int = Query(5, ge=1, le=12, description="Сколько компаний с вакансиями 1С"),
+    product_keyword: str = Query("1С", description="Ключевое слово продукта"),
+):
+    """
+    Живой скан HH.ru через API — триггер спроса и компании с ИНН (DaData).
+    Контакты вакансии не сохраняются; касание — только из TenChat/Сетка/LinkedIn/DaData.
+    """
+    from hh_auth import HHAuthClient
+    from live_companies import is_active_company
+
+    scan = HHAuthClient.scan_one_c_vacancy_triggers(
+        limit=limit,
+        product_keyword=product_keyword,
+    )
+    ingested: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, str]] = []
+    for vac in scan.get("items") or []:
+        inn = (vac.get("inn") or "").strip()
+        employer = (vac.get("employer") or vac.get("employer_matched") or "").strip()
+        if not inn:
+            skipped.append({"employer": employer, "reason": "no_inn"})
+            continue
+        if not is_active_company(inn):
+            skipped.append({"employer": employer, "inn": inn, "reason": "inactive"})
+            continue
+        memory_store.upsert_from_hh_vacancy(inn, employer, vac)
+        row = memory_store.get_company(inn)
+        ingested.append({
+            "inn": inn,
+            "name": employer,
+            "vacancy_title": vac.get("title"),
+            "vacancy_url": vac.get("url"),
+            "trigger_only": True,
+            "card_status": (row or {}).get("card_status"),
+            "status_label": company_status.status_label((row or {}).get("card_status") or ""),
+        })
+    return {
+        "product_keyword": product_keyword,
+        "scan_status": scan.get("scan_status"),
+        "scan_message": scan.get("scan_message"),
+        "raw_vacancy_count": scan.get("raw_vacancy_count", 0),
+        "found_vacancies": len(scan.get("items") or []),
+        "ingested_count": len(ingested),
+        "skipped_count": len(skipped),
+        "companies": ingested,
+        "skipped": skipped[:10],
+    }
+
+
+@app.post("/api/copilot/tender-scan")
+def copilot_tender_scan(
+    limit: int = Query(5, ge=1, le=12),
+    product_keyword: str = Query("", description="Ключи оффера для поиска закупок"),
+):
+    """Поиск закупок: Gosplan (ЕИС REST) + Tenderland. Без ключей — test Gosplan и честные статусы."""
+    import procurement_scan
+    from live_companies import is_active_company, is_integrator
+
+    kw = (product_keyword or current_seller_profile.product_name or "").strip()
+    scan = procurement_scan.scan_for_offer(kw, limit=limit)
+    ingested: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, str]] = []
+    offer = (
+        current_seller_profile.model_dump()
+        if hasattr(current_seller_profile, "model_dump")
+        else current_seller_profile.dict()
+    )
+    for item in scan.get("items") or []:
+        inn = (item.get("inn") or "").strip()
+        name = (item.get("name") or "").strip()
+        if not inn:
+            skipped.append({"employer": name, "reason": "no_inn"})
+            continue
+        if is_integrator(inn) or not is_active_company(inn):
+            skipped.append({"employer": name, "inn": inn, "reason": "skip"})
+            continue
+        note = item.get("title") or ""
+        if item.get("price_text"):
+            note = f"{note}. НМЦК {item['price_text']}".strip(". ")
+        memory_store.upsert_from_tender(
+            inn,
+            name,
+            item.get("url") or "",
+            title=item.get("title") or "",
+            note=note,
+        )
+        from company_enrich import ensure_ceo_from_dadata
+
+        ensure_ceo_from_dadata(inn)
+        import company_card as demand_card
+
+        card = demand_card.build_company_card(inn, offer)
+        ingested.append({
+            "inn": inn,
+            "name": name,
+            "title": item.get("title"),
+            "url": item.get("url"),
+            "bid_advice": (card or {}).get("bid_advice"),
+        })
+    return {
+        "product_keyword": kw,
+        "scan_status": scan.get("scan_status"),
+        "scan_message": scan.get("scan_message"),
+        "raw_count": scan.get("raw_count", 0),
+        "sources": scan.get("sources") or {},
+        "ingested_count": len(ingested),
+        "companies": ingested,
+        "skipped": skipped[:10],
+    }
+
+
+@app.get("/api/copilot/memory/people")
+def memory_list_people(inn: str = Query(..., description="ИНН компании")):
+    people = memory_store.list_people(inn)
+    if not people:
+        raise HTTPException(status_code=404, detail="No people in memory for this INN")
+    return {"inn": inn, "count": len(people), "people": people}
+
+
+@app.get("/api/copilot/memory/contacts")
+def memory_list_contacts(person_id: int = Query(..., description="ID person из memory")):
+    contacts = memory_store.list_contacts(person_id)
+    return {"person_id": person_id, "count": len(contacts), "contacts": contacts}
 
 @app.get("/api/copilot/demo-companies")
 def copilot_demo_companies():
@@ -740,18 +1088,46 @@ def enrich_company_profile(
         raise HTTPException(status_code=400, detail="Укажите ИНН, сайт или название компании")
 
     try:
-        resolved_inn = demo_mode.resolve_company_query(
-            raw, lambda q: search_company(query=q)
-        )
+        if demo_mode.looks_like_inn(raw) or DADATA_API_KEY:
+            resolved_inn = demo_mode.resolve_company_query(
+                raw, lambda q: search_company(query=q)
+            )
+        else:
+            raise ValueError("Укажите ИНН — DaData не задан, поиск по названию недоступен")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    import company_card as demand_card
+
+    offer = current_seller_profile.model_dump() if hasattr(current_seller_profile, "model_dump") else current_seller_profile.dict()
+    memory_card = demand_card.build_company_card(resolved_inn, offer)
+    if memory_card:
+        return demand_card.card_as_enrich_payload(memory_card)
+
+    if not DADATA_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="DaData не задан. Откройте компанию из листа спроса или задайте DADATA_API_KEY.",
+        )
+
     if not refresh:
-        cached = demo_mode.cache_get(resolved_inn)
+        cached = memory_store.get_enrich_payload(resolved_inn)
         if cached:
             cached = dict(cached)
             cached["cache_hit"] = True
-            return cached
+            cached["memory_hit"] = True
+            missing = memory_store.slots_needing_search(
+                (cached.get("lpr_matrix") or {}).get("lprs") or []
+            )
+            cached["slots_needing_search"] = missing
+            if not missing:
+                return cached
+
+    stored_lprs = None
+    if not refresh:
+        stored_row = memory_store.get_enrich_payload(resolved_inn)
+        if stored_row:
+            stored_lprs = (stored_row.get("lpr_matrix") or {}).get("lprs") or []
 
     dadata_res = search_company(query=resolved_inn)
     
@@ -788,12 +1164,22 @@ def enrich_company_profile(
     
     product_kw = current_seller_profile.product_name or "1С"
     vacancies = generate_dynamic_hh_vacancies(company_info["inn"], company_info["name"], product_kw)
+    for vac in vacancies:
+        try:
+            memory_store.upsert_from_hh_vacancy(
+                company_info["inn"],
+                company_info["name"],
+                vac,
+            )
+        except Exception:
+            pass
     lpr_list = generate_dynamic_lprs(
         company_info["inn"],
         company_info["name"],
         company_info["ceo"],
         f"Вакансии: {len(vacancies)} на hh.ru",
         website_url=website_url or None,
+        stored_lprs=stored_lprs,
     )
     
     score = 75
@@ -834,6 +1220,7 @@ def enrich_company_profile(
         "sources_status_note": sources_note,
         "demo_mode": False,
         "cache_hit": False,
+        "memory_hit": False,
         "query_resolved": {"input": raw, "inn": resolved_inn},
         "lpr_matrix": {
             "total_lprs": len(lpr_list),
@@ -872,7 +1259,20 @@ def enrich_company_profile(
         except ValueError:
             pass
 
-    demo_mode.cache_set(resolved_inn, result)
+    try:
+        result["company_card"] = company_status.compute_from_enrich_payload(result)
+        memory_store.save_enrich_payload(resolved_inn, result)
+        row = memory_store.get_company(resolved_inn)
+        if row:
+            result["company_card"] = company_status.card_status_payload(
+                row.get("card_status") or result["company_card"]["status"],
+                triggers=row.get("triggers") or result["company_card"].get("triggers"),
+            )
+    except Exception:
+        result.setdefault(
+            "company_card",
+            company_status.compute_from_enrich_payload(result),
+        )
     return result
 
 @app.post("/api/crm/create-deal")

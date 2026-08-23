@@ -101,6 +101,13 @@ def is_demo_mode() -> bool:
 
 
 def cache_get(inn: str) -> Optional[Dict[str, Any]]:
+    """Deprecated in-process cache — delegates to persistent memory when available."""
+    try:
+        import memory_store as ms
+
+        return ms.get_enrich_payload(inn)
+    except Exception:
+        pass
     key = inn.strip()
     ts = _enrich_cache_ts.get(key)
     if ts and (time.time() - ts) < ENRICH_CACHE_TTL:
@@ -109,6 +116,13 @@ def cache_get(inn: str) -> Optional[Dict[str, Any]]:
 
 
 def cache_set(inn: str, payload: Dict[str, Any]) -> None:
+    try:
+        import memory_store as ms
+
+        ms.save_enrich_payload(inn, payload)
+        return
+    except Exception:
+        pass
     key = inn.strip()
     _enrich_cache[key] = payload
     _enrich_cache_ts[key] = time.time()
